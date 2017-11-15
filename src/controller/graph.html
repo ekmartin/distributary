@@ -22,6 +22,7 @@
   });
 
 require(["renderer", "jquery"], function (renderer, $) {
+	var lastData;
 	renderer.init("#graph");
 
 	$.ajax({
@@ -40,7 +41,10 @@ require(["renderer", "jquery"], function (renderer, $) {
 			url: "graph",
 			dataType: "text",
 			success: function(data) {
-				renderer.render(data);
+				if (data !== lastData) {
+					renderer.render(data);
+					lastData = data;
+				}
 			},
 		});
 	}, 1000);
