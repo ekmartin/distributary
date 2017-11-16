@@ -23,13 +23,12 @@ fn main() {
         distributary::DurabilityMode::Permanent,
         512,
         Duration::from_millis(1),
-        Some(Duration::from_secs(5)),
+        Some(Duration::from_secs(10)),
         Some(String::from("example")),
     );
 
     // set up Soup via recipe
     let mut builder = ControllerBuilder::default();
-    builder.set_logger(distributary::logger_pls());
     builder.set_persistence(persistence_params);
 
     let mut blender = builder.build();
