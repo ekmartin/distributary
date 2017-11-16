@@ -1,3 +1,4 @@
+use bincode;
 use petgraph::graph::NodeIndex;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -5,7 +6,7 @@ use std::thread;
 use std::time;
 use std::collections::hash_map::Entry;
 use std::rc::Rc;
-use std::io::{BufRead, BufReader, ErrorKind};
+use std::io::{BufRead, BufReader, BufWriter, ErrorKind};
 use std::fs::File;
 
 use std::net::SocketAddr;
@@ -225,6 +226,8 @@ impl DomainBuilder {
 
                     ingress_inject: Default::default(),
 
+                    snapshot_id: 0,
+
                     addr,
                     readers,
                     inject: None,
@@ -265,6 +268,8 @@ pub struct Domain {
     not_ready: HashSet<LocalNodeIndex>,
 
     ingress_inject: local::Map<(usize, Vec<DataType>)>,
+
+    snapshot_id: u64,
 
     transaction_state: transactions::DomainState,
     persistence_parameters: persistence::Parameters,
@@ -810,6 +815,9 @@ impl Domain {
             }
             Packet::StartRecovery { .. } => {
                 self.handle_recovery();
+            }
+            Packet::TakeSnapshot { id } => {
+                self.snapshot(id);
             }
             consumed => {
                 match consumed {
@@ -1644,6 +1652,39 @@ impl Domain {
                 .for_each(|packet| self.handle(box packet));
         }
 
+        self.control_reply_tx
+            .send(ControlReplyPacket::ack())
+            .unwrap();
+    }
+
+    /// Persists a snapshot of each materialized nodes, and sends a single ACK when complete.
+    fn snapshot(&mut self, id: u64) {
+        let indices: Vec<_> = self.nodes
+            .iter()
+            .map(|(index, _node)| index)
+            .collect();
+
+        for local_index in indices {
+            if let Some(state) = self.state.get(&local_index) {
+                let filename = format!(
+                    "{}-snapshot-#{}-{}_{}-{}.bin",
+                    &self.persistence_parameters.log_prefix,
+                    id,
+                    self.index.index(),
+                    self.shard.unwrap_or(0),
+                    local_index.id(),
+                );
+
+                info!(self.log, "Persisting snapshot {}", filename);
+                let file = File::create(&filename)
+                    .expect(&format!("Failed creating snapshot file: {}", filename));
+                let mut writer = BufWriter::new(file);
+                bincode::serialize_into(&mut writer, &state, bincode::Infinite)
+                    .expect("bincode serialization of snapshot failed");
+            }
+        }
+
+        self.snapshot_id = id;
         self.control_reply_tx
             .send(ControlReplyPacket::ack())
             .unwrap();

@@ -8,6 +8,7 @@
 
 extern crate arrayvec;
 extern crate backtrace;
+extern crate bincode;
 extern crate buf_redux;
 extern crate channel;
 extern crate core;

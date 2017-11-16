@@ -23,17 +23,20 @@ fn main() {
         distributary::DurabilityMode::Permanent,
         512,
         Duration::from_millis(1),
+        Some(Duration::from_secs(5)),
         Some(String::from("example")),
     );
 
     // set up Soup via recipe
     let mut builder = ControllerBuilder::default();
+    builder.set_logger(distributary::logger_pls());
     builder.set_persistence(persistence_params);
 
     let mut blender = builder.build();
     blender.install_recipe(sql.to_owned());
     blender.recover();
     thread::sleep(Duration::from_millis(1000));
+    println!("{}", blender.graphviz());
 
     // Get mutators and getter.
     let inputs = blender.inputs();
@@ -54,17 +57,20 @@ fn main() {
             .unwrap();
     }
 
-    // Then create a new vote:
-    println!("Casting vote...");
-    let uid = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-    vote.put(vec![aid.into(), uid.into()]).unwrap();
+    loop {
+        // Then create a new vote:
+        println!("Casting vote...");
+        let uid = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        vote.put(vec![aid.into(), uid.into()]).unwrap();
 
-    println!("Finished writing! Let's wait for things to propagate...");
-    thread::sleep(Duration::from_millis(1000));
+        println!("Finished writing! Let's wait for things to propagate...");
+        thread::sleep(Duration::from_millis(1000));
 
-    println!("Reading...");
-    println!("{:#?}", awvc.lookup(&1.into(), true))
+        println!("Reading...");
+        println!("{:#?}", awvc.lookup(&1.into(), true));
+        thread::sleep(Duration::from_millis(1000));
+    }
 }

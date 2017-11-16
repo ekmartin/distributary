@@ -5,6 +5,7 @@ authors = ["The Distributary Developers"]
 
 [dependencies]
 arrayvec = "0.4.0"
+bincode = "0.9.0"
 buf_redux = "0.6.1"
 evmap = "1.0.0"
 fnv = "1.0.5"
