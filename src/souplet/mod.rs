@@ -9,11 +9,11 @@ use channel::{self, TcpSender};
 use channel::poll::{PollEvent, PollingLoop, ProcessResult, RpcPollEvent, RpcPollingLoop};
 use dataflow::{DomainBuilder, Readers};
 use dataflow::checktable::TokenGenerator;
+use dataflow::coordination::{CoordinationMessage, CoordinationPayload};
 use dataflow::backlog::SingleReadHandle;
 use dataflow::prelude::*;
 
 use controller::{ReadQuery, ReadReply};
-use coordination::{CoordinationMessage, CoordinationPayload};
 
 use worker;
 
@@ -25,7 +25,7 @@ pub struct Souplet {
     pool: worker::WorkerPool,
 
     // Controller connection
-    controller_addr: String,
+    controller_addr: SocketAddr,
     listen_addr: String,
     listen_port: u16,
 
@@ -150,7 +150,7 @@ impl Souplet {
 
             listen_addr: String::from(listen_addr),
             listen_port: port,
-            controller_addr: String::from(controller),
+            controller_addr: controller.parse().unwrap(),
 
             read_listen_addr,
 
@@ -182,8 +182,7 @@ impl Souplet {
             }
         };
 
-        let stream =
-            TcpSender::connect(&SocketAddr::from_str(&self.controller_addr).unwrap(), None);
+        let stream = TcpSender::connect(&self.controller_addr, None);
         match stream {
             Ok(s) => {
                 self.sender = Some(s);
@@ -249,6 +248,7 @@ impl Souplet {
             self.readers.clone(),
             self.channel_coordinator.clone(),
             addr,
+            &Some(self.controller_addr),
         );
 
         let listener = ::mio::net::TcpListener::from_listener(listener, &addr).unwrap();

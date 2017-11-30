@@ -340,7 +340,6 @@ extern crate tokio_core;
 extern crate vec_map;
 
 mod controller;
-mod coordination;
 mod souplet;
 mod worker;
 
