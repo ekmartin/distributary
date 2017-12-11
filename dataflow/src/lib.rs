@@ -13,6 +13,7 @@ extern crate buf_redux;
 extern crate channel;
 extern crate core;
 extern crate evmap;
+extern crate flate2;
 extern crate fnv;
 extern crate itertools;
 extern crate nom_sql;

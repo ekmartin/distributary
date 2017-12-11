@@ -20,6 +20,7 @@ vec_map = { version = "0.8.0", features = ["eders"] }
 
 # need features
 backtrace = { version = "0.3.2", features = ["serialize-serde"] }
+flate2 = { version = "1.0.1", features = ["rust_backend"], default-features = false }
 serde = { version = "1.0.8", features = ["rc"] }
 timekeeper = {version = "0.3.0", default-features = false }
 

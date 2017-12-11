@@ -1,4 +1,6 @@
 use bincode;
+use flate2::Compression;
+use flate2::write::ZlibEncoder;
 use serde::Serialize;
 
 use std::sync::mpsc;
@@ -42,7 +44,8 @@ impl SnapshotPersister {
     fn serialize<T: Serialize>(filename: String, state: T) {
         let file =
             File::create(&filename).expect(&format!("Failed creating snapshot file: {}", filename));
-        let mut writer = BufWriter::new(file);
+        let buffered = BufWriter::new(file);
+        let mut writer = ZlibEncoder::new(buffered, Compression::default());
         bincode::serialize_into(&mut writer, &state, bincode::Infinite)
             .expect("bincode serialization of snapshot failed");
     }
