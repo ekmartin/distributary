@@ -318,6 +318,7 @@ extern crate bincode;
 extern crate channel;
 extern crate core;
 extern crate dataflow;
+extern crate flate2;
 extern crate fnv;
 extern crate futures;
 extern crate hyper;

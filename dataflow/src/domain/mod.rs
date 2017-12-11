@@ -1,5 +1,6 @@
 use bincode;
 use petgraph::graph::NodeIndex;
+use flate2::bufread::ZlibDecoder;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
@@ -1606,7 +1607,8 @@ impl Domain {
         {
             let file = File::open(&filename)
                 .expect(&format!("Failed reading snapshot file: {}", filename));
-            let mut reader = BufReader::new(file);
+            let buffered = BufReader::new(file);
+            let mut reader = ZlibDecoder::new(buffered);
             bincode::deserialize_from(&mut reader, bincode::Infinite)
                 .expect("bincode deserialization of snapshot failed")
         };
