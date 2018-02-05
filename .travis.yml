@@ -1,5 +1,7 @@
 dist: trusty
 language: rust
+services:
+  - zookeeper
 rust:
   - nightly
 cache: cargo
@@ -7,8 +9,9 @@ env:
   - SETTLE_TIME=2000
 script:
   - cargo check --all --all-targets
-  - cargo test --verbose --all
+  - RUST_BACKTRACE=full cargo test --verbose --all
 addons:
   apt:
     packages:
     - libhwloc-dev
+    - zookeeper
