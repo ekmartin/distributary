@@ -262,7 +262,6 @@ impl<T: 'static> IntoIterator for Map<T> {
 
 use std::collections::hash_map;
 use fnv::FnvHashMap;
-use std::hash::Hash;
 
 pub struct Row<T>(Rc<T>);
 
@@ -276,28 +275,31 @@ impl<T> Deref for Row<T> {
 }
 
 #[derive(Clone)]
-pub enum KeyType<'a, T: 'a> {
-    Single(&'a T),
-    Double((T, T)),
-    Tri((T, T, T)),
-    Quad((T, T, T, T)),
-    Quin((T, T, T, T, T)),
-    Sex((T, T, T, T, T, T)),
+pub enum KeyType<'a> {
+    Single(&'a DataType),
+    Double((DataType, DataType)),
+    Tri((DataType, DataType, DataType)),
+    Quad((DataType, DataType, DataType, DataType)),
+    Quin((DataType, DataType, DataType, DataType, DataType)),
+    Sex((DataType, DataType, DataType, DataType, DataType, DataType)),
 }
 
-enum KeyedState<T: Eq + Hash> {
-    Single(FnvHashMap<T, Vec<Row<Vec<T>>>>),
-    Double(FnvHashMap<(T, T), Vec<Row<Vec<T>>>>),
-    Tri(FnvHashMap<(T, T, T), Vec<Row<Vec<T>>>>),
-    Quad(FnvHashMap<(T, T, T, T), Vec<Row<Vec<T>>>>),
-    Quin(FnvHashMap<(T, T, T, T, T), Vec<Row<Vec<T>>>>),
-    Sex(FnvHashMap<(T, T, T, T, T, T), Vec<Row<Vec<T>>>>),
+enum KeyedState {
+    Single(FnvHashMap<DataType, Vec<Row<Vec<DataType>>>>),
+    Double(FnvHashMap<(DataType, DataType), Vec<Row<Vec<DataType>>>>),
+    Tri(FnvHashMap<(DataType, DataType, DataType), Vec<Row<Vec<DataType>>>>),
+    Quad(FnvHashMap<(DataType, DataType, DataType, DataType), Vec<Row<Vec<DataType>>>>),
+    Quin(FnvHashMap<(DataType, DataType, DataType, DataType, DataType), Vec<Row<Vec<DataType>>>>),
+    Sex(FnvHashMap<
+        (DataType, DataType, DataType, DataType, DataType, DataType),
+        Vec<Row<Vec<DataType>>>,
+    >),
 }
 
-impl<'a, T: 'static + Eq + Hash + Clone> KeyType<'a, T> {
+impl<'a> KeyType<'a> {
     pub fn from<I>(other: I) -> Self
     where
-        I: IntoIterator<Item = &'a T>,
+        I: IntoIterator<Item = &'a DataType>,
         <I as IntoIterator>::IntoIter: ExactSizeIterator,
     {
         let mut other = other.into_iter();
@@ -334,7 +336,7 @@ impl<'a, T: 'static + Eq + Hash + Clone> KeyType<'a, T> {
     }
 }
 
-impl<T: Eq + Hash> KeyedState<T> {
+impl KeyedState {
     pub fn is_empty(&self) -> bool {
         match *self {
             KeyedState::Single(ref m) => m.is_empty(),
@@ -357,7 +359,7 @@ impl<T: Eq + Hash> KeyedState<T> {
         }
     }
 
-    pub fn lookup<'a>(&'a self, key: &KeyType<T>) -> Option<&'a Vec<Row<Vec<T>>>> {
+    pub fn lookup<'a>(&'a self, key: &KeyType) -> Option<&'a Vec<Row<Vec<DataType>>>> {
         match (self, key) {
             (&KeyedState::Single(ref m), &KeyType::Single(k)) => m.get(k),
             (&KeyedState::Double(ref m), &KeyType::Double(ref k)) => m.get(k),
@@ -370,8 +372,8 @@ impl<T: Eq + Hash> KeyedState<T> {
     }
 }
 
-impl<'a, T: Eq + Hash> Into<KeyedState<T>> for &'a [usize] {
-    fn into(self) -> KeyedState<T> {
+impl<'a> Into<KeyedState> for &'a [usize] {
+    fn into(self) -> KeyedState {
         match self.len() {
             0 => unreachable!(),
             1 => KeyedState::Single(FnvHashMap::default()),
@@ -385,24 +387,24 @@ impl<'a, T: Eq + Hash> Into<KeyedState<T>> for &'a [usize] {
     }
 }
 
-pub enum LookupResult<'a, T: 'a> {
-    Some(&'a [Row<Vec<T>>]),
+pub enum LookupResult<'a> {
+    Some(&'a [Row<Vec<DataType>>]),
     Missing,
 }
 
-struct SingleState<T: Hash + Eq + Clone + 'static> {
+struct SingleState {
     key: Vec<usize>,
-    state: KeyedState<T>,
+    state: KeyedState,
     partial: Option<Vec<Tag>>,
 }
 
-pub struct State<T: Hash + Eq + Clone + 'static> {
-    state: Vec<SingleState<T>>,
+pub struct State {
+    state: Vec<SingleState>,
     by_tag: HashMap<Tag, usize>,
     rows: usize,
 }
 
-impl<T: Hash + Eq + Clone + 'static> Default for State<T> {
+impl Default for State {
     fn default() -> Self {
         State {
             state: Vec::new(),
@@ -412,7 +414,7 @@ impl<T: Hash + Eq + Clone + 'static> Default for State<T> {
     }
 }
 
-impl<T: Hash + Eq + Clone + 'static> State<T> {
+impl State {
     /// Construct base materializations differently (potentially)
     pub fn base() -> Self {
         Self::default()
@@ -456,7 +458,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
             }
 
             let (new, old) = self.state.split_last_mut().unwrap();
-            let mut insert = move |rs: &Vec<Row<Vec<T>>>| for r in rs {
+            let mut insert = move |rs: &Vec<Row<Vec<DataType>>>| for r in rs {
                 State::insert_into(new, Row(r.0.clone()));
             };
             match old[0].state {
@@ -497,7 +499,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
     /// Insert the given record into the given state.
     ///
     /// Returns false if a hole was encountered (and the record hence not inserted).
-    fn insert_into(s: &mut SingleState<T>, r: Row<Vec<T>>) -> bool {
+    fn insert_into(s: &mut SingleState, r: Row<Vec<DataType>>) -> bool {
         use std::collections::hash_map::Entry;
         match s.state {
             KeyedState::Single(ref mut map) => {
@@ -584,7 +586,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         true
     }
 
-    pub fn insert(&mut self, r: Vec<T>, partial_tag: Option<Tag>) -> bool {
+    pub fn insert(&mut self, r: Vec<DataType>, partial_tag: Option<Tag>) -> bool {
         let r = Rc::new(r);
 
         if let Some(tag) = partial_tag {
@@ -609,10 +611,10 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         }
     }
 
-    pub fn remove(&mut self, r: &[T]) -> bool {
+    pub fn remove(&mut self, r: &[DataType]) -> bool {
         let mut hit = false;
         let mut removed = false;
-        let fix = |removed: &mut bool, rs: &mut Vec<Row<Vec<T>>>| {
+        let fix = |removed: &mut bool, rs: &mut Vec<Row<Vec<DataType>>>| {
             // rustfmt
             if let Some(i) = rs.iter().position(|rsr| &rsr[..] == r) {
                 rs.swap_remove(i);
@@ -701,7 +703,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         hit
     }
 
-    pub fn iter(&self) -> hash_map::Values<T, Vec<Row<Vec<T>>>> {
+    pub fn iter(&self) -> hash_map::Values<DataType, Vec<Row<Vec<DataType>>>> {
         for index in &self.state {
             if let KeyedState::Single(ref map) = index.state {
                 if index.partial.is_some() {
@@ -730,7 +732,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         }
     }
 
-    pub fn mark_filled(&mut self, key: Vec<T>, tag: &Tag) {
+    pub fn mark_filled(&mut self, key: Vec<DataType>, tag: &Tag) {
         debug_assert!(!self.state.is_empty(), "filling uninitialized index");
         let i = self.by_tag[tag];
         let index = &mut self.state[i];
@@ -782,7 +784,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         assert!(replaced.is_none());
     }
 
-    pub fn mark_hole(&mut self, key: &[T], tag: &Tag) {
+    pub fn mark_hole(&mut self, key: &[DataType], tag: &Tag) {
         debug_assert!(!self.state.is_empty(), "filling uninitialized index");
         let i = self.by_tag[tag];
         let index = &mut self.state[i];
@@ -818,7 +820,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         assert!(removed.is_some());
     }
 
-    pub fn lookup<'a>(&'a self, columns: &[usize], key: &KeyType<T>) -> LookupResult<'a, T> {
+    pub fn lookup<'a>(&'a self, columns: &[usize], key: &KeyType) -> LookupResult<'a> {
         debug_assert!(!self.state.is_empty(), "lookup on uninitialized index");
         let index = &self.state[self.state_for(columns)
                                     .expect("lookup on non-indexed column set")];
@@ -834,11 +836,11 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
         }
     }
 
-    fn fix<'a>(rs: &'a Vec<Row<Vec<T>>>) -> impl Iterator<Item = Vec<T>> + 'a {
+    fn fix<'a>(rs: &'a Vec<Row<Vec<DataType>>>) -> impl Iterator<Item = Vec<DataType>> + 'a {
         rs.iter().map(|r| Vec::clone(&**r))
     }
 
-    pub fn cloned_records(&self) -> Vec<Vec<T>> {
+    pub fn cloned_records(&self) -> Vec<Vec<DataType>> {
         match self.state[0].state {
             KeyedState::Single(ref map) => map.values().flat_map(State::fix).collect(),
             KeyedState::Double(ref map) => map.values().flat_map(State::fix).collect(),
@@ -864,7 +866,7 @@ impl<T: Hash + Eq + Clone + 'static> State<T> {
     }
 }
 
-impl<'a, T: Eq + Hash + Clone + 'static> State<T> {
+impl<'a> State {
     fn unalias_for_state(&mut self) {
         let left = self.state.drain(..).last();
         if let Some(left) = left {
@@ -873,22 +875,22 @@ impl<'a, T: Eq + Hash + Clone + 'static> State<T> {
     }
 }
 
-impl<'a, T: Eq + Hash + Clone + 'static> Drop for State<T> {
+impl<'a> Drop for State {
     fn drop(&mut self) {
         self.unalias_for_state();
         self.clear();
     }
 }
 
-impl<T: Hash + Eq + Clone + 'static> IntoIterator for State<T> {
-    type Item = Vec<Vec<T>>;
+impl IntoIterator for State {
+    type Item = Vec<Vec<DataType>>;
     type IntoIter = Box<Iterator<Item = Self::Item>>;
     fn into_iter(mut self) -> Self::IntoIter {
         // we need to make sure that the records eventually get dropped, so we need to ensure there
         // is only one index left (which therefore owns the records), and then cast back to the
         // original boxes.
         self.unalias_for_state();
-        let own = |rs: Vec<Row<Vec<T>>>| match rs.into_iter()
+        let own = |rs: Vec<Row<Vec<DataType>>>| match rs.into_iter()
             .map(|r| Rc::try_unwrap(r.0))
             .collect::<Result<Vec<_>, _>>()
         {
