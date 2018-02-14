@@ -265,6 +265,12 @@ pub struct Row(Rc<Vec<DataType>>);
 
 unsafe impl Send for Row {}
 
+impl Row {
+    pub fn unpack(self) -> Vec<DataType> {
+        Rc::try_unwrap(self.0).unwrap()
+    }
+}
+
 impl Deref for Row {
     type Target = Vec<DataType>;
     fn deref(&self) -> &Self::Target {
@@ -540,7 +546,7 @@ impl ToSql for DataType {
 
 impl PersistentState {
     fn initialize() -> Self {
-        let connection = Connection::open("sqlite_db").unwrap();
+        let connection = Connection::open_in_memory().unwrap();
         connection
             .execute("CREATE TABLE store (row BLOB)", &[])
             .unwrap();
