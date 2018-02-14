@@ -11,12 +11,16 @@ extern crate fnv;
 extern crate nom_sql;
 extern crate petgraph;
 extern crate rahashmap;
+extern crate rusqlite;
 extern crate serde;
 #[macro_use]
 extern crate serde_derive;
 
 #[cfg(any(feature = "web", test))]
 #[macro_use]
+extern crate serde_json;
+
+#[cfg(not(any(feature = "web", test)))]
 extern crate serde_json;
 
 pub mod addressing;

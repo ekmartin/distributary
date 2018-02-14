@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ops::Deref;
 use std::rc::Rc;
 
@@ -16,6 +17,7 @@ impl Tag {
     }
 }
 
+#[derive(Clone)]
 pub struct Row(pub(crate) Rc<Vec<DataType>>);
 
 unsafe impl Send for Row {}
@@ -28,7 +30,7 @@ impl Deref for Row {
 }
 
 pub enum LookupResult<'a> {
-    Some(&'a [Row]),
+    Some(Cow<'a, [Row]>),
     Missing,
 }
 
