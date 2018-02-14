@@ -263,12 +263,12 @@ impl<T: 'static> IntoIterator for Map<T> {
 use std::collections::hash_map;
 use fnv::FnvHashMap;
 
-pub struct Row<T>(Rc<T>);
+pub struct Row(Rc<Vec<DataType>>);
 
-unsafe impl<T> Send for Row<T> {}
+unsafe impl Send for Row {}
 
-impl<T> Deref for Row<T> {
-    type Target = T;
+impl Deref for Row {
+    type Target = Vec<DataType>;
     fn deref(&self) -> &Self::Target {
         &*self.0
     }
@@ -285,14 +285,14 @@ pub enum KeyType<'a> {
 }
 
 enum KeyedState {
-    Single(FnvHashMap<DataType, Vec<Row<Vec<DataType>>>>),
-    Double(FnvHashMap<(DataType, DataType), Vec<Row<Vec<DataType>>>>),
-    Tri(FnvHashMap<(DataType, DataType, DataType), Vec<Row<Vec<DataType>>>>),
-    Quad(FnvHashMap<(DataType, DataType, DataType, DataType), Vec<Row<Vec<DataType>>>>),
-    Quin(FnvHashMap<(DataType, DataType, DataType, DataType, DataType), Vec<Row<Vec<DataType>>>>),
+    Single(FnvHashMap<DataType, Vec<Row>>),
+    Double(FnvHashMap<(DataType, DataType), Vec<Row>>),
+    Tri(FnvHashMap<(DataType, DataType, DataType), Vec<Row>>),
+    Quad(FnvHashMap<(DataType, DataType, DataType, DataType), Vec<Row>>),
+    Quin(FnvHashMap<(DataType, DataType, DataType, DataType, DataType), Vec<Row>>),
     Sex(FnvHashMap<
         (DataType, DataType, DataType, DataType, DataType, DataType),
-        Vec<Row<Vec<DataType>>>,
+        Vec<Row>,
     >),
 }
 
@@ -359,7 +359,7 @@ impl KeyedState {
         }
     }
 
-    pub fn lookup<'a>(&'a self, key: &KeyType) -> Option<&'a Vec<Row<Vec<DataType>>>> {
+    pub fn lookup<'a>(&'a self, key: &KeyType) -> Option<&'a Vec<Row>> {
         match (self, key) {
             (&KeyedState::Single(ref m), &KeyType::Single(k)) => m.get(k),
             (&KeyedState::Double(ref m), &KeyType::Double(ref k)) => m.get(k),
@@ -388,7 +388,7 @@ impl<'a> Into<KeyedState> for &'a [usize] {
 }
 
 pub enum LookupResult<'a> {
-    Some(&'a [Row<Vec<DataType>>]),
+    Some(&'a [Row]),
     Missing,
 }
 
@@ -453,7 +453,7 @@ impl State {
         }
     }
 
-    pub fn iter(&self) -> hash_map::Values<DataType, Vec<Row<Vec<DataType>>>> {
+    pub fn iter(&self) -> hash_map::Values<DataType, Vec<Row>> {
         match *self {
             State::InMemory(ref memory_state) => memory_state.iter(),
             _ => unreachable!(),
@@ -568,7 +568,7 @@ impl MemoryState {
             }
 
             let (new, old) = self.state.split_last_mut().unwrap();
-            let mut insert = move |rs: &Vec<Row<Vec<DataType>>>| {
+            let mut insert = move |rs: &Vec<Row>| {
                 for r in rs {
                     MemoryState::insert_into(new, Row(r.0.clone()));
                 }
@@ -636,7 +636,7 @@ impl MemoryState {
     fn remove(&mut self, r: &[DataType]) -> bool {
         let mut hit = false;
         let mut removed = false;
-        let fix = |removed: &mut bool, rs: &mut Vec<Row<Vec<DataType>>>| {
+        let fix = |removed: &mut bool, rs: &mut Vec<Row>| {
             // rustfmt
             if let Some(i) = rs.iter().position(|rsr| &rsr[..] == r) {
                 rs.swap_remove(i);
@@ -725,7 +725,7 @@ impl MemoryState {
         hit
     }
 
-    fn iter(&self) -> hash_map::Values<DataType, Vec<Row<Vec<DataType>>>> {
+    fn iter(&self) -> hash_map::Values<DataType, Vec<Row>> {
         for index in &self.state {
             if let KeyedState::Single(ref map) = index.state {
                 if index.partial.is_some() {
@@ -890,7 +890,7 @@ impl MemoryState {
     /// Insert the given record into the given state.
     ///
     /// Returns false if a hole was encountered (and the record hence not inserted).
-    fn insert_into(s: &mut SingleState, r: Row<Vec<DataType>>) -> bool {
+    fn insert_into(s: &mut SingleState, r: Row) -> bool {
         use std::collections::hash_map::Entry;
         match s.state {
             KeyedState::Single(ref mut map) => {
@@ -977,7 +977,7 @@ impl MemoryState {
         true
     }
 
-    fn fix<'a>(rs: &'a Vec<Row<Vec<DataType>>>) -> impl Iterator<Item = Vec<DataType>> + 'a {
+    fn fix<'a>(rs: &'a Vec<Row>) -> impl Iterator<Item = Vec<DataType>> + 'a {
         rs.iter().map(|r| Vec::clone(&**r))
     }
 }
@@ -1006,7 +1006,7 @@ impl IntoIterator for MemoryState {
         // is only one index left (which therefore owns the records), and then cast back to the
         // original boxes.
         self.unalias_for_state();
-        let own = |rs: Vec<Row<Vec<DataType>>>| match rs.into_iter()
+        let own = |rs: Vec<Row>| match rs.into_iter()
             .map(|r| Rc::try_unwrap(r.0))
             .collect::<Result<Vec<_>, _>>()
         {
