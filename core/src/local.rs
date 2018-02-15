@@ -516,7 +516,7 @@ impl State {
     pub fn cloned_records(&self) -> Vec<Vec<DataType>> {
         match *self {
             State::InMemory(ref s) => s.cloned_records(),
-            _ => unreachable!(),
+            State::Persistent(ref s) => s.cloned_records(),
         }
     }
 
@@ -573,6 +573,12 @@ impl PersistentState {
             .map(|(i, column)| format!("index_{} = ?{}", column, i + 1))
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    // Used with statement.query_map to deserialize the rows returned from SQlite
+    fn map_rows(result: &rusqlite::Row) -> Vec<DataType> {
+        let row: String = result.get(0);
+        serde_json::from_str(&row).unwrap()
     }
 
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
@@ -632,19 +638,16 @@ impl PersistentState {
         let query = format!("SELECT row FROM store WHERE {}", clauses);
         let mut statement = self.connection.prepare_cached(&query).unwrap();
 
-        let mapper = |result: &rusqlite::Row| -> Vec<DataType> {
-            let row: String = result.get(0);
-            serde_json::from_str(&row).unwrap()
-        };
-
         let rows = match *key {
-            KeyType::Single(a) => statement.query_map(&[a], mapper),
-            KeyType::Double(ref r) => statement.query_map(&[&r.0, &r.1], mapper),
-            KeyType::Tri(ref r) => statement.query_map(&[&r.0, &r.1, &r.2], mapper),
-            KeyType::Quad(ref r) => statement.query_map(&[&r.0, &r.1, &r.2, &r.3], mapper),
-            KeyType::Quin(ref r) => statement.query_map(&[&r.0, &r.1, &r.2, &r.3, &r.4], mapper),
+            KeyType::Single(a) => statement.query_map(&[a], Self::map_rows),
+            KeyType::Double(ref r) => statement.query_map(&[&r.0, &r.1], Self::map_rows),
+            KeyType::Tri(ref r) => statement.query_map(&[&r.0, &r.1, &r.2], Self::map_rows),
+            KeyType::Quad(ref r) => statement.query_map(&[&r.0, &r.1, &r.2, &r.3], Self::map_rows),
+            KeyType::Quin(ref r) => {
+                statement.query_map(&[&r.0, &r.1, &r.2, &r.3, &r.4], Self::map_rows)
+            }
             KeyType::Sex(ref r) => {
-                statement.query_map(&[&r.0, &r.1, &r.2, &r.3, &r.4, &r.5], mapper)
+                statement.query_map(&[&r.0, &r.1, &r.2, &r.3, &r.4, &r.5], Self::map_rows)
             }
         };
 
@@ -665,6 +668,20 @@ impl PersistentState {
         let query = format!("DELETE FROM store WHERE {}", clauses);
         let mut statement = self.connection.prepare_cached(&query).unwrap();
         statement.execute(&index_values[..]).unwrap() > 0
+    }
+
+    fn cloned_records(&self) -> Vec<Vec<DataType>> {
+        let mut statement = self.connection
+            .prepare_cached("SELECT row FROM store")
+            .unwrap();
+
+        let rows = statement
+            .query_map(&[], Self::map_rows)
+            .unwrap()
+            .map(|row| row.unwrap())
+            .collect::<Vec<_>>();
+
+        rows
     }
 }
 
