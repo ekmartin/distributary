@@ -460,7 +460,7 @@ impl State {
     pub fn remove(&mut self, r: &[DataType]) -> bool {
         match *self {
             State::InMemory(ref mut s) => s.remove(r),
-            _ => unreachable!(),
+            State::Persistent(ref mut s) => s.remove(r),
         }
     }
 
@@ -530,7 +530,6 @@ impl State {
 
 pub struct PersistentState {
     connection: Connection,
-    statements: HashMap<Vec<usize>, String>,
     indices: HashSet<usize>,
 }
 
@@ -559,9 +558,21 @@ impl PersistentState {
 
         Self {
             connection,
-            statements: Default::default(),
             indices: Default::default(),
         }
+    }
+
+    // Joins together a SQL clause on the form of
+    // index_0 = columns[0], index_1 = columns[1]...
+    fn build_clause<'a, I>(columns: I) -> String
+    where
+        I: Iterator<Item = &'a usize>,
+    {
+        columns
+            .enumerate()
+            .map(|(i, column)| format!("index_{} = ?{}", column, i + 1))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
@@ -579,17 +590,6 @@ impl PersistentState {
                 )
                 .unwrap();
         }
-
-        let clauses = columns
-            .iter()
-            .enumerate()
-            .map(|(i, column)| format!("index_{} = ?{}", column, i + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let statement = format!("SELECT row FROM store WHERE {}", clauses);
-        self.connection.prepare_cached(&statement).unwrap();
-        self.statements.insert(Vec::from(columns), statement);
     }
 
     fn insert(&mut self, r: Vec<DataType>, partial_tag: Option<Tag>) -> bool {
@@ -628,9 +628,9 @@ impl PersistentState {
     }
 
     fn lookup(&self, columns: &[usize], key: &KeyType) -> LookupResult {
-        let mut statement = self.connection
-            .prepare_cached(&self.statements[&Vec::from(columns)])
-            .unwrap();
+        let clauses = Self::build_clause(columns.iter());
+        let query = format!("SELECT row FROM store WHERE {}", clauses);
+        let mut statement = self.connection.prepare_cached(&query).unwrap();
 
         let mapper = |result: &rusqlite::Row| -> Vec<DataType> {
             let row: String = result.get(0);
@@ -653,6 +653,18 @@ impl PersistentState {
             .collect::<Vec<_>>();
 
         LookupResult::Some(Cow::Owned(data))
+    }
+
+    fn remove(&mut self, r: &[DataType]) -> bool {
+        let clauses = Self::build_clause(self.indices.iter());
+        let index_values = self.indices
+            .iter()
+            .map(|index| &r[*index] as &ToSql)
+            .collect::<Vec<&ToSql>>();
+
+        let query = format!("DELETE FROM store WHERE {}", clauses);
+        let mut statement = self.connection.prepare_cached(&query).unwrap();
+        statement.execute(&index_values[..]).unwrap() > 0
     }
 }
 
