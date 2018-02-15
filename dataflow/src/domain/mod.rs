@@ -1200,7 +1200,15 @@ impl Domain {
                             let mut s = {
                                 let n = self.nodes[&node].borrow();
                                 if n.is_internal() && n.get_base().is_some() {
-                                    State::base()
+                                    State::base(
+                                        format!(
+                                            "{}_{}_{}",
+                                            self.persistence_parameters.log_prefix,
+                                            n.name(),
+                                            self.shard.unwrap_or(0),
+                                        ),
+                                        self.persistence_parameters.mode.clone(),
+                                    )
                                 } else {
                                     State::default()
                                 }
@@ -1573,8 +1581,10 @@ impl Domain {
             .collect();
 
         for (local_addr, global_addr, is_transactional) in node_info {
-            let path = self.persistence_parameters
-                .log_path(self.nodes[&local_addr].borrow().name(), self.shard.unwrap_or(0));
+            let path = self.persistence_parameters.log_path(
+                self.nodes[&local_addr].borrow().name(),
+                self.shard.unwrap_or(0),
+            );
 
             let file = match File::open(&path) {
                 Ok(f) => f,

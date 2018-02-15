@@ -1,6 +1,7 @@
 *-log-*.json
 *.png
 *.log
+soup.db
 plotting/*.png
 
 callgrind.out.*
