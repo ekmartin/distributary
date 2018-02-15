@@ -82,6 +82,7 @@ fn it_works_basic() {
         128,
         Duration::from_millis(1),
         Some(get_log_name("it_works_basic")),
+        true,
     );
     g.with_persistence_options(pparams);
     let (a, b, c) = g.migrate(|mig| {
@@ -504,6 +505,7 @@ fn it_recovers_persisted_logs() {
             128,
             Duration::from_millis(1),
             Some(log_name.name.clone()),
+            true,
         );
         g.with_persistence_options(pparams);
 
@@ -611,6 +613,7 @@ fn it_recovers_persisted_logs_w_multiple_nodes() {
             128,
             Duration::from_millis(1),
             Some(log_name.name.clone()),
+            true,
         );
         g.with_persistence_options(pparams);
 
@@ -668,6 +671,7 @@ fn it_recovers_persisted_logs_w_transactions() {
             128,
             Duration::from_millis(1),
             Some(log_name.name.clone()),
+            true,
         );
         g.with_persistence_options(pparams);
 

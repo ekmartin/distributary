@@ -37,11 +37,13 @@ impl VoteClient for Client {
             DurabilityMode::MemoryOnly
         };
 
+        let persist_base_nodes = args.is_present("persist-bases");
         let persistence_params = PersistenceParameters::new(
             mode,
             queue_length,
             flush_timeout,
             Some(String::from("vote")),
+            persist_base_nodes,
         );
 
         // setup db
