@@ -7,10 +7,10 @@ use std::iter::FromIterator;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 
+use bincode;
 use fnv::FnvHashMap;
 use rusqlite::{self, Connection};
 use rusqlite::types::{ToSql, ToSqlOutput};
-use serde_json;
 
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash, Debug, Serialize, Deserialize)]
 pub struct Tag(pub u32);
@@ -566,8 +566,8 @@ impl PersistentState {
 
     // Used with statement.query_map to deserialize the rows returned from SQlite
     fn map_rows(result: &rusqlite::Row) -> Vec<DataType> {
-        let row: String = result.get(0);
-        serde_json::from_str(&row).unwrap()
+        let row: Vec<u8> = result.get(0);
+        bincode::deserialize(&row).unwrap()
     }
 
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
@@ -644,7 +644,7 @@ impl PersistentState {
             ))
             .unwrap();
 
-        let row = serde_json::to_string(&r).unwrap();
+        let row = bincode::serialize(&r).unwrap();
         let mut values: Vec<&ToSql> = vec![&row];
         let mut index_values = self.indices
             .iter()
