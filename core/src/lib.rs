@@ -5,6 +5,7 @@
 #![deny(unused_extern_crates)]
 
 extern crate arccstr;
+extern crate bincode;
 extern crate chrono;
 extern crate fnv;
 extern crate nom_sql;
@@ -16,9 +17,6 @@ extern crate serde_derive;
 
 #[cfg(any(feature = "web", test))]
 #[macro_use]
-extern crate serde_json;
-
-#[cfg(not(any(feature = "web", test)))]
 extern crate serde_json;
 
 pub mod addressing;
