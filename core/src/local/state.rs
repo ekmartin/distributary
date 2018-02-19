@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use local::keyed_state::KeyedState;
 use local::single_state::SingleState;
-use serde_json;
 
+use bincode;
 use rusqlite::{self, Connection};
 use rusqlite::types::{ToSql, ToSqlOutput};
 
@@ -173,8 +173,8 @@ impl PersistentState {
 
     // Used with statement.query_map to deserialize the rows returned from SQlite
     fn map_rows(result: &rusqlite::Row) -> Vec<DataType> {
-        let row: String = result.get(0);
-        serde_json::from_str(&row).unwrap()
+        let row: Vec<u8> = result.get(0);
+        bincode::deserialize(&row).unwrap()
     }
 
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
@@ -251,7 +251,7 @@ impl PersistentState {
             ))
             .unwrap();
 
-        let row = serde_json::to_string(&r).unwrap();
+        let row = bincode::serialize(&r).unwrap();
         let mut values: Vec<&ToSql> = vec![&row];
         let mut index_values = self.indices
             .iter()
@@ -406,11 +406,6 @@ impl MemoryState {
                 },
             }
         }
-    }
-
-    /// Returns a Vec of all keys that currently exist on this materialization.
-    fn keys(&self) -> Vec<Vec<usize>> {
-        self.state.iter().map(|s| &s.key).cloned().collect()
     }
 
     /// Returns whether this state is currently keyed on anything. If not, then it cannot store any
