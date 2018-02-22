@@ -14,7 +14,7 @@ pub fn new(cols: usize, key: usize) -> (SingleReadHandle, WriteHandle) {
 /// Misses in this table will call `trigger` to populate the entry, and retry until successful.
 pub fn new_partial<F>(cols: usize, key: usize, trigger: F) -> (SingleReadHandle, WriteHandle)
 where
-    F: Fn(&DataType) + 'static + Send + Sync,
+    F: Fn(Vec<&DataType>) + 'static + Send + Sync,
 {
     new_inner(cols, key, Some(Arc::new(trigger)))
 }
@@ -22,7 +22,7 @@ where
 fn new_inner(
     cols: usize,
     key: usize,
-    trigger: Option<Arc<Fn(&DataType) + Send + Sync>>,
+    trigger: Option<Arc<Fn(Vec<&DataType>) + Send + Sync>>,
 ) -> (SingleReadHandle, WriteHandle) {
     let (r, w) = evmap::Options::default()
         .with_meta(-1)
@@ -115,7 +115,7 @@ impl WriteHandle {
 #[derive(Clone)]
 pub struct SingleReadHandle {
     handle: evmap::ReadHandle<DataType, Vec<DataType>, i64, FnvBuildHasher>,
-    trigger: Option<Arc<Fn(&DataType) + Send + Sync>>,
+    trigger: Option<Arc<Fn(Vec<&DataType>) + Send + Sync>>,
     key: usize,
 }
 
@@ -144,7 +144,7 @@ impl SingleReadHandle {
                     use std::thread;
 
                     // trigger a replay to populate
-                    (*trigger)(key);
+                    (*trigger)(vec![key]);
 
                     if block {
                         // wait for result to come through

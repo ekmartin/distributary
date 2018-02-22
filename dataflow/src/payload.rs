@@ -226,7 +226,7 @@ pub enum Packet {
     RequestReaderReplay {
         node: LocalNodeIndex,
         col: usize,
-        key: Vec<DataType>,
+        keys: Vec<Vec<DataType>>,
     },
 
     /// Instruct domain to replay the state of a particular node along an existing replay path.

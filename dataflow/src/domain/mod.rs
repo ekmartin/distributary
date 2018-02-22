@@ -279,7 +279,7 @@ pub struct Domain {
 impl Domain {
     fn find_tags_and_replay(
         &mut self,
-        miss_key: Vec<DataType>,
+        miss_keys: Vec<Vec<DataType>>,
         miss_column: usize,
         miss_in: LocalNodeIndex,
         sends: &mut EnqueuedSends,
@@ -301,36 +301,38 @@ impl Domain {
                 }
             }
 
-            // send a message to the source domain(s) responsible
-            // for the chosen tag so they'll start replay.
-            let key = miss_key.clone(); // :(
-            if let TriggerEndpoint::Local(..) = self.replay_paths[&tag].trigger {
-                if self.already_requested(&tag, &key[..]) {
-                    return;
+            for key in &miss_keys {
+                // send a message to the source domain(s) responsible
+                // for the chosen tag so they'll start replay.
+                let key = key.clone(); // :(
+                if let TriggerEndpoint::Local(..) = self.replay_paths[&tag].trigger {
+                    if self.already_requested(&tag, &key[..]) {
+                        return;
+                    }
+
+                    trace!(self.log,
+                           "got replay request";
+                           "tag" => tag.id(),
+                           "key" => format!("{:?}", key)
+                    );
+                    self.seed_replay(tag, &key[..], None, sends);
+                    found = true;
+                    continue;
                 }
 
-                trace!(self.log,
-                       "got replay request";
-                       "tag" => tag.id(),
-                       "key" => format!("{:?}", key)
-                );
-                self.seed_replay(tag, &key[..], None, sends);
+                // NOTE: due to max_concurrent_replays, it may be that we only replay from *some* of
+                // these ancestors now, and some later. this will cause more of the replay to be
+                // buffered up at the union above us, but that's probably fine.
+                self.request_partial_replay(tag, key);
                 found = true;
                 continue;
             }
-
-            // NOTE: due to max_concurrent_replays, it may be that we only replay from *some* of
-            // these ancestors now, and some later. this will cause more of the replay to be
-            // buffered up at the union above us, but that's probably fine.
-            self.request_partial_replay(tag, key);
-            found = true;
-            continue;
         }
 
         if !found {
             unreachable!(format!(
                 "no tag found to fill missing value {:?} in {}.{:?}",
-                miss_key, miss_in, miss_column
+                miss_keys, miss_in, miss_column
             ));
         }
     }
@@ -383,7 +385,7 @@ impl Domain {
         }
 
         assert_eq!(miss_columns.len(), 1);
-        self.find_tags_and_replay(miss_key, miss_columns[0], miss_in, sends);
+        self.find_tags_and_replay(vec![miss_key], miss_columns[0], miss_in, sends);
     }
 
     fn send_partial_replay_request(&mut self, tag: Tag, key: Vec<DataType>) {
@@ -961,27 +963,37 @@ impl Domain {
                                         })
                                         .collect::<Vec<_>>(),
                                 );
-                                let (r_part, w_part) =
-                                    backlog::new_partial(cols, key_col, move |key| {
+                                let (r_part, w_part) = backlog::new_partial(
+                                    cols,
+                                    key_col,
+                                    move |keys| {
                                         let mut txs = txs.lock().unwrap();
-                                        let tx = if txs.len() == 1 {
-                                            &mut txs[0]
-                                        } else {
-                                            let n = txs.len();
-                                            &mut txs[::shard_by(key, n)]
-                                        };
+                                        let n = txs.len();
+                                        let shards = keys.into_iter().group_by(|key| {
+                                            if n == 1 {
+                                                0
+                                            } else {
+                                                ::shard_by(key, n)
+                                            }
+                                        });
 
-                                        let mut m = box Packet::RequestReaderReplay {
-                                            key: vec![key.clone()],
-                                            col: key_col,
-                                            node: node,
-                                        };
+                                        for (shard, group) in shards.into_iter() {
+                                            let keys: Vec<_> = group.map(|key| vec![key.clone()]).collect();
+                                            let mut m = box Packet::RequestReaderReplay {
+                                                keys,
+                                                col: key_col,
+                                                node: node,
+                                            };
 
-                                        if tx.1 {
-                                            m = m.make_local();
+                                            let (ref mut sender, is_local) = txs[shard];
+                                            if is_local {
+                                                m = m.make_local();
+                                            }
+
+                                            sender.send(m).unwrap();
                                         }
-                                        tx.0.send(m).unwrap();
-                                    });
+                                    },
+                                );
 
                                 let mut n = self.nodes[&node].borrow_mut();
                                 n.with_reader_mut(|r| {
@@ -1080,8 +1092,8 @@ impl Domain {
                             },
                         );
                     }
-                    Packet::RequestReaderReplay { key, col, node } => {
-                        self.find_tags_and_replay(key, col, node, sends);
+                    Packet::RequestReaderReplay { keys, col, node } => {
+                        self.find_tags_and_replay(keys, col, node, sends);
                     }
                     Packet::RequestPartialReplay { tag, key } => {
                         if !self.already_requested(&tag, &key) {
