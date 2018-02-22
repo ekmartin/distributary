@@ -166,6 +166,60 @@ impl SingleReadHandle {
         }
     }
 
+    pub fn find_multiple_and<F, T>(
+        &self,
+        keys: Vec<DataType>,
+        mut then: F,
+        block: bool,
+    ) -> Result<Vec<(Option<T>, i64)>, ()>
+    where
+        F: FnMut(&[Vec<DataType>]) -> T,
+    {
+        let mut missing_keys = vec![];
+        let mut results = vec![];
+        for key in &keys {
+            let result = self.try_find_and(key, &mut then)?;
+            match (block, result) {
+                (true, (None, _)) => missing_keys.push(key),
+                (_, r) => results.push(r),
+            };
+        }
+
+        if missing_keys.len() == 0 {
+            return Ok(results);
+        }
+
+        if let Some(ref trigger) = self.trigger {
+            use std::thread;
+            let mut current_missing = missing_keys.clone();
+
+            // trigger a replay to populate
+            (*trigger)(missing_keys);
+
+            loop {
+                thread::yield_now();
+                // look up the missing keys, and store any found results:
+                let mut new_missing = vec![];
+                for key in current_missing {
+                    let result = self.try_find_and(key, &mut then)?;
+                    match result {
+                        (None, _) => new_missing.push(key),
+                        r => results.push(r),
+                    }
+                }
+
+                if new_missing.len() > 0 {
+                    // next iteration we only want to retry the ones we didn't find now:
+                    current_missing = new_missing;
+                } else {
+                    return Ok(results);
+                }
+            }
+        } else {
+            unreachable!();
+        }
+    }
+
     pub(crate) fn try_find_and<F, T>(
         &self,
         key: &DataType,

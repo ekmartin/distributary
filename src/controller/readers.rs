@@ -23,7 +23,7 @@ pub(crate) fn handle_message(m: LocalOrNot<ReadQuery>, conn: &mut Rpc, s: &mut R
         match unsafe { m.take() } {
             ReadQuery::Normal {
                 target,
-                mut keys,
+                keys,
                 block,
             } => ReadReply::Normal(READERS.with(move |readers_cache| {
                 let mut readers_cache = readers_cache.borrow_mut();
@@ -33,68 +33,15 @@ pub(crate) fn handle_message(m: LocalOrNot<ReadQuery>, conn: &mut Rpc, s: &mut R
                         readers.get(&target).unwrap().clone()
                     });
 
-                let mut ret = Vec::with_capacity(keys.len());
-                ret.resize(keys.len(), Vec::new());
-
                 let dup = |rs: &[Vec<DataType>]| {
                     rs.into_iter()
                         .map(|r| r.iter().map(|v| v.deep_clone()).collect())
                         .collect()
                 };
-                let dup = &dup;
 
-                // first do non-blocking reads for all keys to trigger any replays
-                let found = keys.iter_mut()
-                    .map(|key| {
-                        let rs = reader.find_and(key, dup, false).map(|r| r.0);
-                        (key, rs)
-                    })
-                    .enumerate();
-
-                let mut ready = true;
-                for (i, (key, v)) in found {
-                    match v {
-                        Ok(Some(rs)) => {
-                            // immediate hit!
-                            ret[i] = rs;
-                            *key = DataType::None;
-                        }
-                        Err(()) => {
-                            // map not yet ready
-                            ready = false;
-                            *key = DataType::None;
-                            break;
-                        }
-                        Ok(None) => {
-                            // triggered partial replay
-                        }
-                    }
-                }
-
-                if !ready {
-                    return Err(());
-                }
-
-                if !block {
-                    return Ok(ret);
-                }
-
-                // block on all remaining keys
-                for (i, key) in keys.iter().enumerate() {
-                    if let DataType::None = *key {
-                        // already have this value
-                    } else {
-                        // note that this *does* mean we'll trigger replay twice for things that
-                        // miss and aren't replayed in time, which is a little sad. but at the same
-                        // time, that replay trigger will just be ignored by the target domain.
-                        ret[i] = reader
-                            .find_and(key, dup, true)
-                            .map(|r| r.0.unwrap_or_default())
-                            .expect("evmap *was* ready, then *stopped* being ready")
-                    }
-                }
-
-                Ok(ret)
+                let results = reader.find_multiple_and(keys, &dup, block)?;
+                let rows = results.into_iter().filter_map(|r| r.0).collect();
+                Ok(rows)
             })),
             ReadQuery::WithToken { target, keys } => ReadReply::WithToken(
                 keys.into_iter()
