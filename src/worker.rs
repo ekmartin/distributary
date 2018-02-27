@@ -820,15 +820,28 @@ impl Worker {
 
 impl dataflow::Executor for ReplicaReceivers {
     fn send_back(&self, channel: SourceChannelIdentifier, reply: Result<i64, ()>) {
-        if let Some(ch) = self.get(channel.token) {
-            // XXX: what if the token has been reused?
-            use bincode;
-            use std::io::Write;
+        use bincode;
+        use std::io::Write;
+        let ch = self.get(channel.token).unwrap();
+        // XXX: what if the token has been reused?
 
-            let stream = ch.borrow();
-            let mut stream = stream.0.get_ref();
-            bincode::serialize_into(&mut stream, &reply).is_ok();
-            stream.flush().is_ok();
+        let stream = ch.borrow();
+        let mut stream = stream.0.get_ref();
+        let mut bytes = &bincode::serialize(&reply).unwrap()[..];
+        // TODO: this should probably poll and check if the socket is ready instead
+        // of just bulldozing bytes through it until it's done.
+        while bytes.len() > 0 {
+            match stream.write(bytes) {
+                Ok(written) => {
+                    bytes = &bytes[written..];
+                }
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    thread::yield_now();
+                }
+                Err(e) => panic!(e),
+            }
         }
+
+        stream.flush().unwrap();
     }
 }
