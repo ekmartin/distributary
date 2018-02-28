@@ -37,6 +37,8 @@ impl VoteClient for Client {
         };
         persistence.queue_capacity = value_t_or_exit!(args, "write-batch-size", usize);
         persistence.log_prefix = "vote".to_string();
+        let flush_ns = value_t_or_exit!(args, "flush-timeout", u32);
+        persistence.flush_timeout = time::Duration::new(0, flush_ns);
 
         // setup db
         let mut s = graph::Setup::default();

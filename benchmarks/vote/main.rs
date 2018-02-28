@@ -598,6 +598,13 @@ fn main() {
                         .help("Size of batches processed at base nodes."),
                 )
                 .arg(
+                    Arg::with_name("flush-timeout")
+                        .long("flush-timeout")
+                        .takes_value(true)
+                        .default_value("100000")
+                        .help("Amount of time in ns to wait before flushing despite not reaching write-batch-size.")
+                )
+                .arg(
                     Arg::with_name("stupid")
                         .long("stupid")
                         .help("Make the migration stupid")
