@@ -553,7 +553,7 @@ impl PersistentState {
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS store (row BLOB);
                 PRAGMA locking_mode = EXCLUSIVE;
-                PRAGMA synchronous = NORMAL;
+                PRAGMA synchronous = FULL;
                 PRAGMA journal_mode = WAL;",
             )
             .unwrap();
