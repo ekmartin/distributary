@@ -183,34 +183,34 @@ impl GroupCommitQueueSet {
         nodes: &DomainNodes,
         ex: &domain::Executor,
     ) -> Option<Box<Packet>> {
-        match self.params.mode {
-            DurabilityMode::DeleteOnExit | DurabilityMode::Permanent => {
-                if !self.files.contains_key(node) {
-                    let file = self.get_or_create_file(node, nodes);
-                    self.files.insert(node.clone(), file);
-                }
+        // match self.params.mode {
+        //     DurabilityMode::DeleteOnExit | DurabilityMode::Permanent => {
+        //         if !self.files.contains_key(node) {
+        //             let file = self.get_or_create_file(node, nodes);
+        //             self.files.insert(node.clone(), file);
+        //         }
 
-                let mut file = &mut self.files[node].1;
-                {
-                    let data_to_flush: Vec<_> = self.pending_packets[&node]
-                        .iter()
-                        .map(|p| match **p {
-                            Packet::Transaction { ref data, .. }
-                            | Packet::Message { ref data, .. } => data,
-                            _ => unreachable!(),
-                        })
-                        .collect();
-                    serde_json::to_writer(&mut file, &data_to_flush).unwrap();
-                    // Separate log flushes with a newline so that the
-                    // file can be easily parsed later on:
-                    writeln!(&mut file, "").unwrap();
-                }
+        //         let mut file = &mut self.files[node].1;
+        //         {
+        //             let data_to_flush: Vec<_> = self.pending_packets[&node]
+        //                 .iter()
+        //                 .map(|p| match **p {
+        //                     Packet::Transaction { ref data, .. }
+        //                     | Packet::Message { ref data, .. } => data,
+        //                     _ => unreachable!(),
+        //                 })
+        //                 .collect();
+        //             serde_json::to_writer(&mut file, &data_to_flush).unwrap();
+        //             // Separate log flushes with a newline so that the
+        //             // file can be easily parsed later on:
+        //             writeln!(&mut file, "").unwrap();
+        //         }
 
-                file.flush().unwrap();
-                file.get_mut().sync_data().unwrap();
-            }
-            DurabilityMode::MemoryOnly => {}
-        }
+        //         file.flush().unwrap();
+        //         file.get_mut().sync_data().unwrap();
+        //     }
+        //     DurabilityMode::MemoryOnly => {}
+        // }
 
         self.wait_start.remove(node);
         Self::merge_packets(&mut self.pending_packets[node], nodes, ex)
