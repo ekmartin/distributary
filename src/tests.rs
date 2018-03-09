@@ -556,7 +556,7 @@ fn it_recovers_persisted_logs() {
         128,
         Duration::from_millis(1),
         Some(log_name.name.clone()),
-        true,
+        false,
     );
 
     {
@@ -653,7 +653,7 @@ fn it_recovers_persisted_logs_w_multiple_nodes() {
         128,
         Duration::from_millis(1),
         Some(log_name.name.clone()),
-        true,
+        false,
     );
 
     {
@@ -701,7 +701,7 @@ fn it_recovers_persisted_logs_w_transactions() {
         128,
         Duration::from_millis(1),
         Some(log_name.name.clone()),
-        true,
+        false,
     );
 
     {
