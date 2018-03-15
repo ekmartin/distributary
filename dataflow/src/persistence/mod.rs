@@ -163,7 +163,7 @@ impl GroupCommitQueueSet {
     pub fn flush_if_necessary(
         &mut self,
         nodes: &DomainNodes,
-        ex: &domain::Executor,
+        ex: &Executor,
     ) -> Option<Box<Packet>> {
         let mut needs_flush = None;
         for (node, wait_start) in self.wait_start.iter() {
@@ -181,7 +181,7 @@ impl GroupCommitQueueSet {
         &mut self,
         node: &LocalNodeIndex,
         nodes: &DomainNodes,
-        ex: &domain::Executor,
+        ex: &Executor,
     ) -> Option<Box<Packet>> {
         // With persistent bases we're already maintaining a write-ahead log,
         // so no need to log twice.
@@ -225,7 +225,7 @@ impl GroupCommitQueueSet {
         &mut self,
         p: Box<Packet>,
         nodes: &DomainNodes,
-        ex: &domain::Executor,
+        ex: &Executor,
     ) -> Option<Box<Packet>> {
         let node = Self::packet_destination(&p).unwrap();
         if !self.pending_packets.contains_key(&node) {
@@ -258,7 +258,6 @@ impl GroupCommitQueueSet {
     fn merge_committed_packets<I>(
         packets: I,
         transaction_state: Option<TransactionState>,
-        ex: &domain::Executor,
     ) -> Option<Box<Packet>>
     where
         I: Iterator<Item = Box<Packet>>,
@@ -272,12 +271,7 @@ impl GroupCommitQueueSet {
         };
         let mut merged_tracer: Tracer = None;
 
-        let ts = if let Some(TransactionState::Committed(ts, ..)) = transaction_state {
-            ts
-        } else {
-            0
-        };
-
+        let mut senders = vec![];
         let merged_data = packets.fold(Records::default(), |mut acc, p| {
             match (p,) {
                 (box Packet::Message {
@@ -285,6 +279,7 @@ impl GroupCommitQueueSet {
                     src,
                     ref mut data,
                     ref mut tracer,
+                    ..
                 },)
                 | (box Packet::Transaction {
                     ref link,
@@ -297,9 +292,7 @@ impl GroupCommitQueueSet {
                     acc.append(data);
 
                     if let Some(src) = src {
-                        // notify sender that we've accepted the write
-                        // NOTE: we should *only* do this for base writes!
-                        ex.send_back(src, Ok(ts));
+                        senders.push(src);
                     }
 
                     match (&merged_tracer, tracer) {
@@ -332,12 +325,14 @@ impl GroupCommitQueueSet {
                 data: merged_data,
                 tracer: merged_tracer,
                 state: merged_state,
+                senders,
             })),
             None => Some(Box::new(Packet::Message {
                 link: merged_link,
                 src: None,
                 data: merged_data,
                 tracer: merged_tracer,
+                senders,
             })),
         }
     }
@@ -347,7 +342,7 @@ impl GroupCommitQueueSet {
     fn merge_transactional_packets(
         packets: &mut Vec<Box<Packet>>,
         nodes: &DomainNodes,
-        ex: &domain::Executor,
+        ex: &Executor,
     ) -> Option<Box<Packet>> {
         let send_reply = |p: &Packet, reply| {
             let src = match *p {
@@ -437,7 +432,6 @@ impl GroupCommitQueueSet {
         Self::merge_committed_packets(
             committed_packets,
             Some(TransactionState::Committed(reply.timestamp, base, prevs)),
-            ex,
         )
     }
 
@@ -445,16 +439,14 @@ impl GroupCommitQueueSet {
     fn merge_packets(
         packets: &mut Vec<Box<Packet>>,
         nodes: &DomainNodes,
-        ex: &domain::Executor,
+        ex: &Executor,
     ) -> Option<Box<Packet>> {
         if packets.is_empty() {
             return None;
         }
 
         match packets[0] {
-            box Packet::Message { .. } => {
-                Self::merge_committed_packets(packets.drain(..), None, ex)
-            }
+            box Packet::Message { .. } => Self::merge_committed_packets(packets.drain(..), None),
             box Packet::Transaction { .. } => Self::merge_transactional_packets(packets, nodes, ex),
             _ => unreachable!(),
         }
