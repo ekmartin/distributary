@@ -12,6 +12,9 @@ use rand::{self, Rng};
 use rusqlite::{self, Connection};
 use rusqlite::types::{ToSql, ToSqlOutput};
 
+// Rows to insert before checkpointing the SQlite WAL.
+const CHECKPOINT_LIMIT: u64 = 100_000;
+
 pub enum State {
     InMemory(MemoryState),
     Persistent(PersistentState),
@@ -129,6 +132,13 @@ impl State {
         }
     }
 
+    pub fn post_ack(&mut self) {
+        match *self {
+            State::InMemory(..) => {}
+            State::Persistent(ref mut s) => s.post_ack(),
+        }
+    }
+
     pub fn evict_random_keys(&mut self, count: usize) -> (&[usize], Vec<Vec<DataType>>) {
         match *self {
             State::InMemory(ref mut s) => s.evict_random_keys(count),
@@ -151,6 +161,7 @@ pub struct PersistentState {
     connection: Connection,
     durability_mode: DurabilityMode,
     indices: HashSet<usize>,
+    rows_since_checkpoint: u64,
 }
 
 impl ToSql for DataType {
@@ -177,9 +188,19 @@ impl PersistentState {
             _ => Connection::open(&full_name).unwrap(),
         };
 
+        // SQLite pragmas:
+        // locking_mode = EXCLUSIVE - We never intend to open this DB in another process
+        // journal_mode = WAL - Use SQlite's "new" write-ahead log mode
+        // synchronous = FULL - fsync on every transaction commit
+        // wal_autocheckpoint = 0 - Disable automatic checkpointing of the WAL. The default
+        // is to checkpoint every 1000 pages, however when this happens a call to .commit() will
+        // sometimes take several milliseconds. Since we're currently testing the use of SQlite's
+        // WAL instead of Soup's own log, that'd be quite unfeasible. Instead we'll sync manually
+        // periodically in state.post_ack().
         connection
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS store (row BLOB);
+                PRAGMA wal_autocheckpoint = 0;
                 PRAGMA locking_mode = EXCLUSIVE;
                 PRAGMA synchronous = FULL;
                 PRAGMA journal_mode = WAL;",
@@ -190,6 +211,7 @@ impl PersistentState {
             connection,
             durability_mode,
             name: full_name,
+            rows_since_checkpoint: Default::default(),
             indices: Default::default(),
         }
     }
@@ -262,6 +284,15 @@ impl PersistentState {
         statement.execute(&index_values[..]).unwrap() > 0
     }
 
+    fn post_ack(&mut self) {
+        if self.rows_since_checkpoint > CHECKPOINT_LIMIT {
+            self.connection
+                .wal_checkpoint(rusqlite::DatabaseName::Main)
+                .unwrap();
+            self.rows_since_checkpoint = 0;
+        }
+    }
+
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
         assert!(partial.is_none(), "Bases can't be partial");
         // Add each of the individual index columns (index_0, index_1...):
@@ -324,6 +355,7 @@ impl PersistentState {
             }
         }
 
+        self.rows_since_checkpoint += records.len() as u64;
         transaction.commit().unwrap();
     }
 

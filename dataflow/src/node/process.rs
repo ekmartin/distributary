@@ -200,6 +200,10 @@ impl Node {
                     _ => {}
                 };
 
+                if let Some(s) = state.get_mut(&addr) {
+                    s.post_ack();
+                }
+
                 misses
             }
             NodeType::Source | NodeType::Dropped => unreachable!(),
