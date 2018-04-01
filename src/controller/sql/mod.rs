@@ -801,8 +801,9 @@ impl<'a> ToFlowParts for &'a str {
 
 #[cfg(test)]
 mod tests {
+    use tests;
     use super::{SqlIncorporator, ToFlowParts};
-    use controller::{ControllerBuilder, Migration};
+    use controller::Migration;
     use dataflow::prelude::*;
     use nom_sql::Column;
     use nom_sql::FunctionExpression;
@@ -838,7 +839,7 @@ mod tests {
     #[test]
     fn it_parses() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_parses");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Must have a base node for type inference to work, so make one manually
@@ -876,7 +877,7 @@ mod tests {
     #[test]
     fn it_incorporates_simple_join() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_simple_join");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type for "users"
@@ -932,7 +933,7 @@ mod tests {
     #[test]
     fn it_incorporates_simple_selection() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_simple_selection");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type
@@ -973,7 +974,7 @@ mod tests {
     #[test]
     fn it_incorporates_aggregation() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_aggregation");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write types
@@ -1027,7 +1028,7 @@ mod tests {
     #[test]
     fn it_does_not_reuse_if_disabled() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_does_not_reuse_if_disabled");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             inc.disable_reuse();
@@ -1056,7 +1057,7 @@ mod tests {
     #[test]
     fn it_reuses_identical_query() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_reuses_identical_query");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type
@@ -1101,7 +1102,7 @@ mod tests {
     #[test]
     fn it_reuses_with_different_parameter() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_reuses_with_different_parameter");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type
@@ -1167,7 +1168,7 @@ mod tests {
     #[test]
     fn it_incorporates_aggregation_no_group_by() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_aggregation_no_group_by");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type
@@ -1221,7 +1222,7 @@ mod tests {
     #[test]
     fn it_incorporates_aggregation_count_star() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_aggregation_count_star");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type
@@ -1272,7 +1273,7 @@ mod tests {
     #[test]
     fn it_incorporates_explicit_multi_join() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_explicit_multi_join");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish base write types for "users" and "articles" and "votes"
@@ -1323,7 +1324,7 @@ mod tests {
     #[test]
     fn it_incorporates_implicit_multi_join() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_implicit_multi_join");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish base write types for "users" and "articles" and "votes"
@@ -1386,7 +1387,7 @@ mod tests {
     #[test]
     fn it_incorporates_literal_projection() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_literal_projection");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             assert!(
@@ -1407,7 +1408,7 @@ mod tests {
     #[test]
     fn it_incorporates_arithmetic_projection() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_arithmetic_projection");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             assert!(
@@ -1434,7 +1435,7 @@ mod tests {
 
     #[test]
     fn it_incorporates_join_with_nested_query() {
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_join_with_nested_query");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             assert!(
@@ -1480,7 +1481,7 @@ mod tests {
     #[test]
     fn it_incorporates_compound_selection() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_incorporates_compound_selection");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             assert!(
@@ -1509,7 +1510,7 @@ mod tests {
     #[test]
     fn it_distinguishes_predicates() {
         // set up graph
-        let mut g = ControllerBuilder::default().build_local();
+        let mut g = tests::build_local("it_distinguishes_predicatesit_distinguishes_predicates");
         g.migrate(|mig| {
             let mut inc = SqlIncorporator::default();
             // Establish a base write type
