@@ -162,6 +162,7 @@ impl PersistentState {
     fn initialize(name: String, durability_mode: DurabilityMode) -> Self {
         let mut opts = rocksdb::Options::default();
         opts.create_if_missing(true);
+        opts.set_merge_operator("append", Self::merge, None);
 
         // Number of threads used by RocksDB:
         // opts.increase_parallelism(4);
@@ -179,6 +180,33 @@ impl PersistentState {
         }
     }
 
+    // RocksDB merge operator that appends new values from `ops` into `existing_value`.
+    // TODO(ekmartin): It would be really nice if we could do this with less serialization.
+    // Currently it needs to call into bincode at multiple points:
+    // 1. To serialize() the values whnen calling db.merge()
+    // 2. To deserialize() the existing values
+    // 3. To deserialize() the new values serialized in step 1 (from ops)
+    // 4. To serialize() the merged
+    // If we could simply append the serialized bytes to the existing byte vector we'd at least be
+    // able to skip steps 2, 3 and 4. I think this would let us use partial merging as well.
+    fn merge(
+        _key: &[u8],
+        existing_value: Option<&[u8]>,
+        ops: &mut rocksdb::MergeOperands,
+    ) -> Option<Vec<u8>> {
+        let mut rows: Vec<Vec<DataType>> = match existing_value {
+            Some(v) => bincode::deserialize(&&*v).unwrap(),
+            None => vec![],
+        };
+
+        for op in ops {
+            let row = bincode::deserialize(op).unwrap();
+            rows.push(row);
+        }
+
+        Some(bincode::serialize(&rows).unwrap())
+    }
+
     // Puts by primary key first, then retrieves the existing value for each index and appends the
     // newly created primary key value.
     fn insert(&mut self, r: Vec<DataType>) -> bool {
@@ -186,15 +214,13 @@ impl PersistentState {
         let serialized_pk = bincode::serialize(&(KeyIndex(0), &pk)).unwrap();
         // Wrap it in a vec to always maintain the same data type for both the primary and other
         // indices: Vec<Vec<DataType>>
-        let row = bincode::serialize(&vec![&r]).unwrap();
-        // We assume the first index is a primary key, which means we can't have multiple
-        // rows for the first index, and that we don't have to retrieve an existing value
-        // to append to.
-        // TODO(ekmartin): This would force each table to have a primary key, which is
-        // probably not what we want.
         let db = self.db.as_ref().unwrap();
-        db.put(&serialized_pk, &row).unwrap();
+        // TODO(ekmartin): If we know that the first index is for an actual primary key (with
+        // unique constraints), we wouldn't have to merge at all - could just .put and override.
+        let row = bincode::serialize(&r).unwrap();
+        db.merge(&serialized_pk, &row).unwrap();
 
+        let serialized_only_pk = bincode::serialize(&pk).unwrap();
         for (i, columns) in self.indices[1..].iter().enumerate() {
             // Construct a key with the index values, and serialize it with bincode:
             let index = columns.iter().map(|i| &r[*i]).collect::<Vec<_>>();
@@ -202,25 +228,7 @@ impl PersistentState {
             let serialized_key = bincode::serialize(&(KeyIndex(i + 1), index)).unwrap();
             // Since an index can point to multiple primary keys, we attempt to retrieve the
             // existing rows this index points to, to add our new primary key to that.
-            let existing = db.get(&serialized_key).unwrap();
-            let mut values = if let Some(v) = existing {
-                let v: Vec<Vec<DataType>> = bincode::deserialize(&&*v).unwrap();
-                v
-            } else {
-                vec![]
-            };
-
-            // To avoid having to clone all the values in primary_index we turn
-            // our Vec<Vec<DataType>> into Vec<Vec<&DataType>>, which lets us clone
-            // only primary_index itself - not each column.
-            let mut rows: Vec<Vec<&DataType>> = values
-                .iter()
-                .map(|row| row.iter().map(|d| d).collect())
-                .collect();
-
-            rows.push(pk.clone());
-            db.put(&serialized_key, &bincode::serialize(&rows).unwrap())
-                .unwrap();
+            db.merge(&serialized_key, &serialized_only_pk).unwrap();
         }
 
         true
