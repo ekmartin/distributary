@@ -14,6 +14,7 @@ generate_mysql_tests = ["default"]
 carry_local = []
 
 [dependencies]
+cexpr = "0.2.3"
 clap = "2.25.0"
 failure = "0.1.1"
 fnv = "1.0.5"
