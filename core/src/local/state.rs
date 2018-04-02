@@ -162,7 +162,7 @@ impl PersistentState {
     fn initialize(name: String, durability_mode: DurabilityMode) -> Self {
         let mut opts = rocksdb::Options::default();
         opts.create_if_missing(true);
-        opts.set_merge_operator("append", Self::merge, None);
+        opts.set_merge_operator("append", Self::merge_operator, None);
 
         // Number of threads used by RocksDB:
         // opts.increase_parallelism(4);
@@ -171,7 +171,6 @@ impl PersistentState {
 
         let full_name = format!("{}.db", name);
         let db = Some(DB::open(&opts, &full_name).unwrap());
-
         Self {
             db,
             durability_mode,
@@ -189,7 +188,7 @@ impl PersistentState {
     // 4. To serialize() the merged
     // If we could simply append the serialized bytes to the existing byte vector we'd at least be
     // able to skip steps 2, 3 and 4. I think this would let us use partial merging as well.
-    fn merge(
+    fn merge_operator(
         _key: &[u8],
         existing_value: Option<&[u8]>,
         ops: &mut rocksdb::MergeOperands,
@@ -218,7 +217,10 @@ impl PersistentState {
         // TODO(ekmartin): If we know that the first index is for an actual primary key (with
         // unique constraints), we wouldn't have to merge at all - could just .put and override.
         let row = bincode::serialize(&r).unwrap();
-        db.merge(&serialized_pk, &row).unwrap();
+        let mut write_opts = rocksdb::WriteOptions::default();
+        write_opts.set_sync(false);
+        write_opts.disable_wal(true);
+        db.merge_opt(&serialized_pk, &row, &write_opts).unwrap();
 
         let serialized_only_pk = bincode::serialize(&pk).unwrap();
         for (i, columns) in self.indices[1..].iter().enumerate() {
@@ -228,7 +230,8 @@ impl PersistentState {
             let serialized_key = bincode::serialize(&(KeyIndex(i + 1), index)).unwrap();
             // Since an index can point to multiple primary keys, we attempt to retrieve the
             // existing rows this index points to, to add our new primary key to that.
-            db.merge(&serialized_key, &serialized_only_pk).unwrap();
+            db.merge_opt(&serialized_key, &serialized_only_pk, &write_opts)
+                .unwrap();
         }
 
         true
