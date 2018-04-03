@@ -19,6 +19,8 @@ use checktable;
 pub struct Parameters {
     /// Number of elements to buffer before flushing.
     pub queue_capacity: usize,
+    /// Number of elements to buffer before flushing to PersistentState.
+    pub persistent_queue_capacity: usize,
     /// Amount of time to wait before flushing despite not reaching `queue_capacity`.
     pub flush_timeout: time::Duration,
     /// Whether the output files should be deleted when the GroupCommitQueue is dropped.
@@ -33,6 +35,7 @@ impl Default for Parameters {
     fn default() -> Self {
         Self {
             queue_capacity: 256,
+            persistent_queue_capacity: 10_000,
             flush_timeout: time::Duration::new(0, 100_000),
             mode: DurabilityMode::MemoryOnly,
             log_prefix: String::from("soup"),
@@ -71,6 +74,7 @@ impl Parameters {
             mode,
             log_prefix,
             persist_base_nodes,
+            persistent_queue_capacity: Default::default(),
         }
     }
 
