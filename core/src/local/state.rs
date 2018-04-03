@@ -50,31 +50,17 @@ impl State {
         }
     }
 
-    pub fn process_records(&mut self, records: &Records) {
+    pub fn process_records(&mut self, records: &mut Records, partial: Option<Tag>) {
         if records.len() == 0 {
             return;
         }
 
         match *self {
-            State::InMemory(ref mut s) => s.process_records(records),
-            State::Persistent(ref mut s) => s.process_records(records),
-        }
-    }
-
-    pub fn insert(&mut self, r: Vec<DataType>, partial_tag: Option<Tag>) -> bool {
-        match *self {
-            State::InMemory(ref mut s) => s.insert(r, partial_tag),
+            State::InMemory(ref mut s) => s.process_records(records, partial),
             State::Persistent(ref mut s) => {
-                assert!(partial_tag.is_none(), "Bases can't be partial");
-                PersistentState::insert(r, &s.indices, &s.connection)
+                assert!(partial.is_none(), "PersistentStates can't be partial");
+                s.process_records(records)
             }
-        }
-    }
-
-    pub fn remove(&mut self, r: &[DataType]) -> bool {
-        match *self {
-            State::InMemory(ref mut s) => s.remove(r),
-            State::Persistent(ref mut s) => PersistentState::remove(r, &s.indices, &s.connection),
         }
     }
 
@@ -224,7 +210,7 @@ impl PersistentState {
     // Builds up an INSERT query on the form of:
     // `INSERT INTO store (index_0, index_1, row) VALUES (...)`
     // where row is a serialized representation of r.
-    fn insert(r: Vec<DataType>, indices: &HashSet<usize>, connection: &Connection) -> bool {
+    fn insert(r: Vec<DataType>, indices: &HashSet<usize>, connection: &Connection) {
         let columns = format!(
             "row, {}",
             indices
@@ -255,10 +241,9 @@ impl PersistentState {
 
         values.append(&mut index_values);
         statement.execute(&values[..]).unwrap();
-        true
     }
 
-    fn remove(r: &[DataType], indices: &HashSet<usize>, connection: &Connection) -> bool {
+    fn remove(r: &[DataType], indices: &HashSet<usize>, connection: &Connection) {
         let clauses = Self::build_clause(indices.iter());
         let index_values = indices
             .iter()
@@ -267,7 +252,7 @@ impl PersistentState {
 
         let query = format!("DELETE FROM store WHERE {}", clauses);
         let mut statement = connection.prepare_cached(&query).unwrap();
-        statement.execute(&index_values[..]).unwrap() > 0
+        statement.execute(&index_values[..]).unwrap();
     }
 
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
@@ -471,18 +456,42 @@ impl MemoryState {
         self.state.iter().any(|s| s.partial())
     }
 
-    fn process_records(&mut self, records: &Records) {
-        for r in records.iter() {
-            match *r {
-                Record::Positive(ref r) => {
-                    let hit = self.insert(r.clone(), None);
-                    debug_assert!(hit);
+    fn process_records(&mut self, records: &mut Records, partial: Option<Tag>) {
+        if self.is_partial() {
+            records.retain(|r| {
+                // we need to check that we're not erroneously filling any holes
+                // there are two cases here:
+                //
+                //  - if the incoming record is a partial replay (i.e., partial.is_some()), then we
+                //    *know* that we are the target of the replay, and therefore we *know* that the
+                //    materialization must already have marked the given key as "not a hole".
+                //  - if the incoming record is a normal message (i.e., partial.is_none()), then we
+                //    need to be careful. since this materialization is partial, it may be that we
+                //    haven't yet replayed this `r`'s key, in which case we shouldn't forward that
+                //    record! if all of our indices have holes for this record, there's no need for us
+                //    to forward it. it would just be wasted work.
+                //
+                //    XXX: we could potentially save come computation here in joins by not forcing
+                //    `right` to backfill the lookup key only to then throw the record away
+                match *r {
+                    Record::Positive(ref r) => self.insert(r.clone(), partial),
+                    Record::Negative(ref r) => self.remove(r),
+                    Record::DeleteRequest(..) => unreachable!(),
                 }
-                Record::Negative(ref r) => {
-                    let hit = self.remove(r);
-                    debug_assert!(hit);
+            });
+        } else {
+            for r in records.iter() {
+                match *r {
+                    Record::Positive(ref r) => {
+                        let hit = self.insert(r.clone(), None);
+                        debug_assert!(hit);
+                    }
+                    Record::Negative(ref r) => {
+                        let hit = self.remove(r);
+                        debug_assert!(hit);
+                    }
+                    Record::DeleteRequest(..) => unreachable!(),
                 }
-                Record::DeleteRequest(..) => unreachable!(),
             }
         }
     }
@@ -617,13 +626,19 @@ mod tests {
         assert!(!state.is_partial());
     }
 
+    fn insert(state: &mut State, row: Vec<DataType>) {
+        let record: Record = row.into();
+        let mut records = record.into();
+        state.process_records(&mut records, None);
+    }
+
     #[test]
     fn persistent_state_single_key() {
         let mut state = setup_persistent();
         let columns = &[0];
         let row: Vec<DataType> = vec![10.into(), "Cat".into()];
         state.add_key(columns, None);
-        state.insert(row, None);
+        insert(&mut state, row);
 
         match state.lookup(columns, &KeyType::Single(&5.into())) {
             LookupResult::Some(rows) => assert_eq!(rows.len(), 0),
@@ -646,7 +661,7 @@ mod tests {
         let columns = &[0, 2];
         let row: Vec<DataType> = vec![10.into(), "Cat".into(), 20.into()];
         state.add_key(columns, None);
-        assert!(state.insert(row.clone(), None));
+        insert(&mut state, row.clone());
 
         match state.lookup(columns, &KeyType::Double((1.into(), 2.into()))) {
             LookupResult::Some(rows) => assert_eq!(rows.len(), 0),
@@ -668,8 +683,7 @@ mod tests {
         let second: Vec<DataType> = vec![10.into(), "Bob".into(), 30.into()];
         state.add_key(&[0], None);
         state.add_key(&[0, 2], None);
-        assert!(state.insert(first.clone(), None));
-        assert!(state.insert(second.clone(), None));
+        state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
 
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
             LookupResult::Some(rows) => {
@@ -696,8 +710,8 @@ mod tests {
         let second: Vec<DataType> = vec![20.into(), "Bob".into()];
         state.add_key(&[0], None);
         state.add_key(&[1], None);
-        assert!(state.insert(first.clone(), None));
-        assert!(state.insert(second.clone(), None));
+        let rs = vec![first.clone(), second.clone()];
+        state.process_records(&mut rs.into(), None);
 
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
             LookupResult::Some(rows) => {
@@ -723,9 +737,14 @@ mod tests {
         let first: Vec<DataType> = vec![10.into(), "Cat".into()];
         let second: Vec<DataType> = vec![20.into(), "Bob".into()];
         state.add_key(columns, None);
-        assert!(state.insert(first.clone(), None));
-        assert!(state.insert(second.clone(), None));
-        assert!(state.remove(&first));
+        state.process_records(
+            &mut vec![
+                Record::Positive(first.clone()),
+                Record::Positive(second.clone()),
+                Record::Negative(first.clone()),
+            ].into(),
+            None,
+        );
 
         match state.lookup(columns, &KeyType::Single(&first[0])) {
             LookupResult::Some(rows) => assert_eq!(rows.len(), 0),
@@ -741,17 +760,6 @@ mod tests {
     }
 
     #[test]
-    fn persistent_state_is_empty() {
-        let mut state = setup_persistent();
-        let columns = &[0];
-        let row: Vec<DataType> = vec![10.into(), "Cat".into()];
-        state.add_key(columns, None);
-        assert!(state.is_empty());
-        assert!(state.insert(row.clone(), None));
-        assert!(!state.is_empty());
-    }
-
-    #[test]
     fn persistent_state_is_useful() {
         let mut state = setup_persistent();
         let columns = &[0];
@@ -761,17 +769,17 @@ mod tests {
     }
 
     #[test]
-    fn persistent_state_len() {
+    fn persistent_state_rows() {
         let mut state = setup_persistent();
         let columns = &[0];
         let first: Vec<DataType> = vec![10.into(), "Cat".into()];
         let second: Vec<DataType> = vec![20.into(), "Bob".into()];
         state.add_key(columns, None);
-        assert_eq!(state.len(), 0);
-        assert!(state.insert(first.clone(), None));
-        assert_eq!(state.len(), 1);
-        assert!(state.insert(second.clone(), None));
-        assert_eq!(state.len(), 2);
+        assert_eq!(state.rows(), 0);
+        insert(&mut state, first.clone());
+        assert_eq!(state.rows(), 1);
+        insert(&mut state, second.clone());
+        assert_eq!(state.rows(), 2);
     }
 
     #[test]
@@ -781,8 +789,7 @@ mod tests {
         let first: Vec<DataType> = vec![10.into(), "Cat".into()];
         let second: Vec<DataType> = vec![20.into(), "Bob".into()];
         state.add_key(columns, None);
-        assert!(state.insert(first.clone(), None));
-        assert!(state.insert(second.clone(), None));
+        state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
         assert_eq!(state.cloned_records(), vec![first, second]);
     }
 
@@ -793,11 +800,9 @@ mod tests {
         let first: Vec<DataType> = vec![10.into(), "Cat".into()];
         let second: Vec<DataType> = vec![20.into(), "Bob".into()];
         state.add_key(columns, None);
-        assert!(state.insert(first.clone(), None));
-        assert!(state.insert(second.clone(), None));
-
+        state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
         state.clear();
-        assert!(state.is_empty());
+        assert_eq!(state.rows(), 0);
     }
 
     #[test]
@@ -818,7 +823,7 @@ mod tests {
         let mut state = setup_persistent();
         let row: Vec<DataType> = vec![10.into(), "Cat".into()];
         state.add_key(&[0], None);
-        assert!(state.insert(row.clone(), None));
+        insert(&mut state, row.clone());
         state.add_key(&[1], None);
 
         match state.lookup(&[1], &KeyType::Single(&row[1])) {
@@ -827,8 +832,8 @@ mod tests {
         };
     }
 
-    fn process_records(mut state: State) {
-        let records: Records = vec![
+    fn test_process_records(mut state: State) {
+        let mut records: Records = vec![
             (vec![1.into(), "A".into()], true),
             (vec![2.into(), "B".into()], true),
             (vec![3.into(), "C".into()], true),
@@ -836,7 +841,7 @@ mod tests {
         ].into();
 
         state.add_key(&[0], None);
-        state.process_records(&records);
+        state.process_records(&mut records, None);
 
         // Make sure the first record has been deleted:
         match state.lookup(&[0], &KeyType::Single(&records[0][0])) {
@@ -857,18 +862,18 @@ mod tests {
     #[test]
     fn persistent_state_process_records() {
         let state = setup_persistent();
-        process_records(state);
+        test_process_records(state);
     }
 
     #[test]
     fn memory_state_process_records() {
         let state = State::default();
-        process_records(state);
+        test_process_records(state);
     }
 
     #[test]
     fn memory_state_old_records_new_index() {
-        let mut state = State::default();
+        let mut state = MemoryState::default();
         let row: Vec<DataType> = vec![10.into(), "Cat".into()];
         state.add_key(&[0], None);
         assert!(state.insert(row.clone(), None));
