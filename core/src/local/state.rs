@@ -182,8 +182,11 @@ impl PersistentState {
         //     the other hand, so we might need to change to NORMAL. With SQlite's WAL enabled
         //     NORMAL indicates that a fsync will happen prior to the WAL being checkpointed.
         connection
+            // TODO(ekmartin): This should be `CREATE TABLE IF NOT EXISTS` normally, but since we
+            // don't support recovering PersistentState yet we want to crash in the case of an
+            // existing database.
             .execute_batch(
-                "CREATE TABLE IF NOT EXISTS store (row BLOB);
+                "CREATE TABLE store (row BLOB);
                 PRAGMA locking_mode = EXCLUSIVE;
                 PRAGMA synchronous = OFF;
                 PRAGMA journal_mode = OFF;",

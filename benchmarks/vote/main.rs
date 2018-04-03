@@ -642,6 +642,13 @@ fn main() {
                         .help("Do not delete the base node logs on exit."),
                 )
                 .arg(
+                    Arg::with_name("persistent-batch-size")
+                        .long("persistent-batch-size")
+                        .takes_value(true)
+                        .default_value("10000")
+                        .help("Size of batches processed at PersistentStates."),
+                )
+                .arg(
                     Arg::with_name("write-batch-size")
                         .long("write-batch-size")
                         .takes_value(true)
