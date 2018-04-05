@@ -5,7 +5,6 @@ authors = ["The Distributary Developers"]
 
 [dependencies]
 bincode = "1.0.0"
-rocksdb = "0.10.0"
 arccstr = "1.1.0"
 fnv = "1.0.5"
 serde_derive = "1.0.8"
@@ -19,3 +18,4 @@ serde = { version = "1.0.8", features = ["rc"] }
 
 # git deps
 nom-sql = { git = "https://github.com/ms705/nom-sql.git", rev = "3801b7627eed652f57354bbbe296a9db74c8b7db" }
+rocksdb = { git = "https://github.com/ekmartin/rust-rocksdb.git", rev = "dbcca72ce6d495341496edbc04e69e96bc35215f" }
