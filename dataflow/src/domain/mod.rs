@@ -1310,7 +1310,11 @@ impl Domain {
                                         self.shard.unwrap_or(0),
                                     );
 
-                                    State::base(base_name, params.mode.clone())
+                                    State::base(
+                                        base_name,
+                                        params.persistence_threads,
+                                        params.mode.clone(),
+                                    )
                                 } else {
                                     State::default()
                                 }
