@@ -18,4 +18,4 @@ serde = { version = "1.0.8", features = ["rc"] }
 
 # git deps
 nom-sql = { git = "https://github.com/ms705/nom-sql.git", rev = "488fad25f379de6c47e1eb86d15a3b18eb91f501" }
-rocksdb = { git = "https://github.com/ekmartin/rust-rocksdb.git", rev = "dbcca72ce6d495341496edbc04e69e96bc35215f" }
+rocksdb = { git = "https://github.com/ekmartin/rust-rocksdb.git", rev = "bc4dbba433f5815493577c10d7b3dd4cb52db52c" }
