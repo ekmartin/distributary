@@ -357,12 +357,11 @@ mod tests;
 
 pub use consensus::{LocalAuthority, ZookeeperAuthority};
 
-pub use core::{DataType, Datas, DurabilityMode, NodeIndex};
+pub use core::{DataType, Datas, DurabilityMode, NodeIndex, PersistenceParameters};
 
 pub use dataflow::checktable::{Token, TransactionResult};
 pub use dataflow::debug::{DebugEvent, DebugEventType};
 pub use dataflow::prelude::DomainIndex;
-pub use dataflow::PersistenceParameters;
 
 pub use controller::sql::reuse::ReuseConfigType;
 pub use controller::{Controller, ControllerBuilder, ControllerHandle, ExclusiveConnection,
