@@ -258,6 +258,7 @@ impl PersistentState {
         let mut opts = rocksdb::Options::default();
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         opts.create_if_missing(true);
+        opts.enable_statistics();
 
         if let Some(ref path) = params.log_dir {
             // Append the db name to the WAL path to ensure
@@ -420,6 +421,7 @@ impl PersistentState {
 
 impl Drop for PersistentState {
     fn drop(&mut self) {
+        println!("{}", self.db_opts.get_statistics().unwrap());
         if self.durability_mode != DurabilityMode::Permanent {
             self.db = None;
             DB::destroy(&self.db_opts, &self.name).unwrap()
