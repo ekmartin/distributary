@@ -260,6 +260,10 @@ impl PersistentState {
         opts.create_if_missing(true);
         opts.enable_statistics();
 
+        let mut block_opts = rocksdb::BlockBasedOptions::default();
+        block_opts.disable_cache();
+        opts.set_block_based_table_factory(&block_opts);
+
         if let Some(ref path) = params.log_dir {
             // Append the db name to the WAL path to ensure
             // that we create a directory for each base shard:
