@@ -165,13 +165,14 @@ where
         set_thread_affinity(bind_generator).unwrap();
     }
 
-    let cc = Mutex::new(CC::new(&params, local_args));
+    let cc = Arc::new(Mutex::new(CC::new(&params, local_args)));
+    let thread_cc = cc.clone();
     let pool = rayon::ThreadPoolBuilder::new()
         .thread_name(|i| format!("client-{}", i))
         .num_threads(nthreads)
         .start_handler(move |_| {
             CLIENT.with(|c| {
-                *c.borrow_mut() = Some(Box::new(cc.lock().unwrap().make()));
+                *c.borrow_mut() = Some(Box::new(thread_cc.lock().unwrap().make()));
             })
         })
         .exit_handler(move |_| {
@@ -232,6 +233,9 @@ where
 
     // all done!
     let took = start.elapsed();
+    let lock = Arc::try_unwrap(cc).ok().unwrap();
+    drop(lock.into_inner().unwrap());
+
     println!(
         "# actual ops/s: {:.2}",
         ops as f64 / (took.as_secs() as f64 + took.subsec_nanos() as f64 / 1_000_000_000f64)
