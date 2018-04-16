@@ -1,8 +1,9 @@
 use clap;
-use clients::{Parameters, VoteClient, VoteClientConstructor};
 use distributary::{self, DataType};
 use std::thread;
 use std::time;
+
+use clients::{Parameters, VoteClient};
 
 pub(crate) mod graph;
 
@@ -12,16 +13,10 @@ pub(crate) struct Client {
     w: distributary::Mutator<distributary::ExclusiveConnection>,
 }
 
-pub(crate) struct Constructor(graph::Graph);
+impl VoteClient for Client {
+    type Constructor = graph::Graph;
 
-// this is *only* safe because we make the getters and mutators exclusive, *and* we get them under
-// a lock (so the Rcs will still be correct)
-unsafe impl Send for Constructor {}
-
-impl VoteClientConstructor for Constructor {
-    type Instance = Client;
-
-    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self {
+    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self::Constructor {
         use distributary::{DurabilityMode, PersistenceParameters};
 
         assert!(params.prime);
@@ -70,26 +65,19 @@ impl VoteClientConstructor for Constructor {
         // allow writes to propagate
         thread::sleep(time::Duration::from_secs(1));
 
-        Constructor(g)
+        g
     }
 
-    fn make(&mut self) -> Self::Instance {
+    fn from(soup: &mut Self::Constructor) -> Self {
         Client {
-            r: self.0
-                .graph
+            r: soup.graph
                 .get_getter("ArticleWithVoteCount")
                 .unwrap()
                 .into_exclusive(),
-            w: self.0.graph.get_mutator("Vote").unwrap().into_exclusive(),
+            w: soup.graph.get_mutator("Vote").unwrap().into_exclusive(),
         }
     }
 
-    fn spawns_threads() -> bool {
-        true
-    }
-}
-
-impl VoteClient for Client {
     fn handle_writes(&mut self, ids: &[i32]) {
         let data: Vec<Vec<DataType>> = ids.into_iter()
             .map(|&article_id| vec![(article_id as usize).into(), 0.into()])
@@ -113,5 +101,9 @@ impl VoteClient for Client {
             })
             .count();
         assert_eq!(rows, ids.len());
+    }
+
+    fn spawns_threads() -> bool {
+        true
     }
 }

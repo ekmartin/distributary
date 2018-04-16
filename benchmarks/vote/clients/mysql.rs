@@ -1,6 +1,8 @@
-use clap;
-use clients::{Parameters, VoteClient, VoteClientConstructor};
 use mysql::{self, Opts, OptsBuilder};
+
+use clap;
+
+use clients::{Parameters, VoteClient};
 
 pub(crate) struct Client {
     conn: mysql::Conn,
@@ -10,10 +12,10 @@ pub(crate) struct Conf {
     opts: Opts,
 }
 
-impl VoteClientConstructor for Conf {
-    type Instance = Client;
+impl VoteClient for Client {
+    type Constructor = Conf;
 
-    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self {
+    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self::Constructor {
         let addr = args.value_of("address").unwrap();
         let addr = format!("mysql://{}", addr);
         let db = args.value_of("database").unwrap();
@@ -78,14 +80,12 @@ impl VoteClientConstructor for Conf {
         Conf { opts: opts.into() }
     }
 
-    fn make(&mut self) -> Self::Instance {
+    fn from(cnf: &mut Self::Constructor) -> Self {
         Client {
-            conn: mysql::Conn::new(self.opts.clone()).unwrap(),
+            conn: mysql::Conn::new(cnf.opts.clone()).unwrap(),
         }
     }
-}
 
-impl VoteClient for Client {
     fn handle_writes(&mut self, ids: &[i32]) {
         let ids = ids.into_iter().map(|a| a as &_).collect::<Vec<_>>();
 

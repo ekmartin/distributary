@@ -1,5 +1,5 @@
 use clap;
-use clients::{Parameters, VoteClient, VoteClientConstructor};
+use clients::{Parameters, VoteClient};
 use memcached::{self, proto::{MultiOperation, ProtoType}};
 use mysql::{self, Opts, OptsBuilder};
 use std::collections::BTreeMap;
@@ -8,16 +8,17 @@ pub(crate) struct Client {
     my: mysql::Conn,
     mem: memcached::Client,
 }
+unsafe impl Send for Client {}
 
 pub(crate) struct Conf {
     my: Opts,
     mem: String,
 }
 
-impl VoteClientConstructor for Conf {
-    type Instance = Client;
+impl VoteClient for Client {
+    type Constructor = Conf;
 
-    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self {
+    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self::Constructor {
         let my_addr = args.value_of("mysql-address").unwrap();
         let my_addr = format!("mysql://{}", my_addr);
         let db = args.value_of("database").unwrap();
@@ -116,18 +117,16 @@ impl VoteClientConstructor for Conf {
         }
     }
 
-    fn make(&mut self) -> Self::Instance {
+    fn from(cnf: &mut Self::Constructor) -> Self {
         Client {
-            my: mysql::Conn::new(self.my.clone()).unwrap(),
+            my: mysql::Conn::new(cnf.my.clone()).unwrap(),
             mem: memcached::Client::connect(
-                &[(&format!("tcp://{}", self.mem), 1)],
+                &[(&format!("tcp://{}", cnf.mem), 1)],
                 ProtoType::Binary,
             ).unwrap(),
         }
     }
-}
 
-impl VoteClient for Client {
     fn handle_writes(&mut self, ids: &[i32]) {
         let ids = ids.into_iter().map(|a| a as &_).collect::<Vec<_>>();
 

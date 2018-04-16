@@ -1,15 +1,17 @@
-use clap;
-use clients::{Parameters, VoteClient, VoteClientConstructor};
 use memcached;
 use memcached::proto::{MultiOperation, ProtoType};
 
-pub struct Constructor(String);
+use clap;
+
+use clients::{Parameters, VoteClient};
+
 pub struct Client(memcached::Client);
+unsafe impl Send for Client {}
 
-impl VoteClientConstructor for Constructor {
-    type Instance = Client;
+impl VoteClient for Client {
+    type Constructor = String;
 
-    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self {
+    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self::Constructor {
         let addr = args.value_of("address").unwrap();
 
         if params.prime {
@@ -45,17 +47,15 @@ impl VoteClientConstructor for Constructor {
             }
         }
 
-        Constructor(addr.to_string())
+        addr.to_string()
     }
 
-    fn make(&mut self) -> Self::Instance {
-        memcached::Client::connect(&[(&format!("tcp://{}", self.0), 1)], ProtoType::Binary)
+    fn from(cnf: &mut Self::Constructor) -> Self {
+        memcached::Client::connect(&[(&format!("tcp://{}", cnf), 1)], ProtoType::Binary)
             .map(Client)
             .unwrap()
     }
-}
 
-impl VoteClient for Client {
     fn handle_writes(&mut self, ids: &[i32]) {
         use std::collections::HashMap;
         let keys: Vec<_> = ids.into_iter()

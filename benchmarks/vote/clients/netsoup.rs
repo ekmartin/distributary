@@ -1,7 +1,8 @@
 use clap;
-use clients::localsoup::graph::RECIPE;
-use clients::{Parameters, VoteClient, VoteClientConstructor};
 use distributary::{self, ControllerHandle, DataType, ZookeeperAuthority};
+
+use clients::localsoup::graph::RECIPE;
+use clients::{Parameters, VoteClient};
 
 pub(crate) struct Client {
     r: distributary::RemoteGetter<distributary::ExclusiveConnection>,
@@ -25,12 +26,10 @@ fn make_getter(
     c.get_getter(view).unwrap().into_exclusive()
 }
 
-pub(crate) struct Constructor(String);
+impl VoteClient for Client {
+    type Constructor = String;
 
-impl VoteClientConstructor for Constructor {
-    type Instance = Client;
-
-    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self {
+    fn new(params: &Parameters, args: &clap::ArgMatches) -> Self::Constructor {
         let zk = format!(
             "{}/{}",
             args.value_of("zookeeper").unwrap(),
@@ -48,20 +47,18 @@ impl VoteClientConstructor for Constructor {
             ).unwrap();
         }
 
-        Constructor(zk)
+        zk
     }
 
-    fn make(&mut self) -> Self::Instance {
-        let mut ch = Handle::new(ZookeeperAuthority::new(&self.0));
+    fn from(control: &mut Self::Constructor) -> Self {
+        let mut ch = Handle::new(ZookeeperAuthority::new(control));
 
         Client {
             r: make_getter(&mut ch, "ArticleWithVoteCount"),
             w: make_mutator(&mut ch, "Vote"),
         }
     }
-}
 
-impl VoteClient for Client {
     fn handle_writes(&mut self, ids: &[i32]) {
         let data: Vec<Vec<DataType>> = ids.into_iter()
             .map(|&article_id| vec![(article_id as usize).into(), 0.into()])
