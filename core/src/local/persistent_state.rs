@@ -53,6 +53,8 @@ impl PersistentIndex {
 pub struct PersistentState {
     name: String,
     db_opts: rocksdb::Options,
+    // Options specific to our index column families.
+    cf_opts: rocksdb::Options,
     // We don't really want DB to be an option, but doing so lets us drop it manually in
     // PersistenState's Drop by setting `self.db = None` - after which we can then discard the
     // persisted files if we want to.
@@ -174,7 +176,7 @@ impl State for PersistentState {
         let column_family = self.db
             .as_mut()
             .unwrap()
-            .create_cf(&index_id, &self.db_opts)
+            .create_cf(&index_id, &self.cf_opts)
             .unwrap();
 
         // Build the new index for existing values:
@@ -258,21 +260,30 @@ impl PersistentState {
     ) -> Self {
         use rocksdb::{ColumnFamilyDescriptor, DB};
         let full_name = format!("{}.db", name);
-        let opts = Self::build_options(&name, params);
+        let db_opts = Self::build_options(&name, params);
+        let cf_opts = Self::build_column_family_options(&name, params);
         // We use a column for each index, and one for meta information.
         // When opening the DB the exact same column families needs to be used,
         // so we'll have to retrieve the existing ones first:
-        let column_family_names = match DB::list_cf(&opts, &full_name) {
+        let column_family_names = match DB::list_cf(&db_opts, &full_name) {
             Ok(cfs) => cfs,
             Err(_err) => vec![DEFAULT_CF.to_string()],
         };
 
         let cfs: Vec<_> = column_family_names
             .iter()
-            .map(|cf| ColumnFamilyDescriptor::new(cf.clone(), Self::build_options(&name, &params)))
+            .map(|cf| {
+                let cf_opts = if cf == DEFAULT_CF {
+                    Self::build_options(&name, &params)
+                } else {
+                    Self::build_column_family_options(&name, &params)
+                };
+
+                ColumnFamilyDescriptor::new(cf.clone(), cf_opts)
+            })
             .collect();
 
-        let mut db = DB::open_cf_descriptors(&opts, &full_name, cfs).unwrap();
+        let mut db = DB::open_cf_descriptors(&db_opts, &full_name, cfs).unwrap();
         let meta = Self::retrieve_and_update_meta(&db);
         let mut indices: Vec<PersistentIndex> = meta.indices
             .into_iter()
@@ -294,7 +305,7 @@ impl PersistentState {
             // Only create the initial column family if it doesn't exist from before.
             // For non-PK bases this will get taken care of in Self::add_key.
             let cf = if column_family_names.len() == 1 {
-                db.create_cf("0", &opts).unwrap()
+                db.create_cf("0", &cf_opts).unwrap()
             } else {
                 db.cf_handle("0").unwrap()
             };
@@ -306,7 +317,8 @@ impl PersistentState {
             indices,
             has_unique_index: primary_key.is_some(),
             epoch: meta.epoch,
-            db_opts: opts,
+            db_opts,
+            cf_opts,
             db: Some(db),
             durability_mode: params.mode.clone(),
             name: full_name,
@@ -328,10 +340,6 @@ impl PersistentState {
             opts.set_wal_dir(path.join(&name));
         }
 
-        // Create prefixes by Self::transform_fn on all new inserted keys:
-        let transform = SliceTransform::create("key", Self::transform_fn, Some(Self::in_domain_fn));
-        opts.set_prefix_extractor(transform);
-
         // Assigns the number of threads for RocksDB's low priority background pool:
         opts.increase_parallelism(params.persistence_threads);
 
@@ -341,6 +349,16 @@ impl PersistentState {
             bucket_count: 1_000_000,
         });
 
+        opts
+    }
+
+    // We don't want to slice transform all keys by default, so we'll
+    // build specific options for our index column families.
+    fn build_column_family_options(name: &str, params: &PersistenceParameters) -> rocksdb::Options {
+        let mut opts = Self::build_options(name, params);
+        // Create prefixes by Self::transform_fn on all new inserted keys:
+        let transform = SliceTransform::create("key", Self::transform_fn, Some(|_| true));
+        opts.set_prefix_extractor(transform);
         opts
     }
 
@@ -407,24 +425,12 @@ impl PersistentState {
     // prefix transformed this key before or not
     // (without including the byte size of Vec<DataType>).
     fn transform_fn(key: &[u8]) -> Vec<u8> {
-        // We'll have to make sure this isn't the META_KEY even when we're filtering it out
-        // in Self::in_domain_fn, as the SliceTransform is used to make hashed keys for our
-        // HashLinkedList memtable factory.
-        if key == META_KEY {
-            return Vec::from(key);
-        }
-
         // We encoded the size of the key itself with a u64, which bincode uses 8 bytes to encode:
         let size_offset = 8;
         let key_size: u64 = bincode::deserialize(&key[..size_offset]).unwrap();
         let prefix_len = size_offset + key_size as usize;
         // Strip away the IndexEpoch and IndexSeq if we haven't already done so:
         Vec::from(&key[..prefix_len])
-    }
-
-    // Decides which keys the prefix transform should apply to.
-    fn in_domain_fn(key: &[u8]) -> bool {
-        key != META_KEY
     }
 
     // A key is built up of five components:
