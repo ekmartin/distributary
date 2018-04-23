@@ -109,8 +109,8 @@ impl State for PersistentState {
             .position(|index| &index.columns[..] == columns)
             .expect("lookup on non-indexed column set") as u32;
 
-        let prefix = Self::serialize_prefix(index_id, &key);
         let data = if index_id == 0 && self.has_unique_index {
+            let prefix = Self::serialize_prefix(index_id, &key);
             // This is a primary key, so we know there's only one row to retrieve
             // (no need to use prefix_iterator).
             let raw_row = db.get(&prefix).unwrap();
@@ -121,8 +121,8 @@ impl State for PersistentState {
                 vec![]
             }
         } else if index_id == 0 {
-            // The first index isn't unique, so we'll have to use a prefix_iterator.
-            db.prefix_iterator(&prefix)
+            // The first index isn't unique, so we'll have to iterate through the rows:
+            self.index_rows(index_id, &key)
                 .map(|(_key, value)| {
                     let row: Vec<DataType> = bincode::deserialize(&*value).unwrap();
                     Row(Rc::new(row))
@@ -131,7 +131,7 @@ impl State for PersistentState {
         } else {
             // For non-primary indices we need to first retrieve the primary index key
             // through our secondary indices, and then call `.get` again on that.
-            db.prefix_iterator(&prefix)
+            self.index_rows(index_id, &key)
                 .map(|(_key, value)| {
                     let raw_row = db.get(&value)
                         .unwrap()
@@ -253,11 +253,12 @@ impl PersistentState {
         // Assigns the number of threads for RocksDB's low priority background pool:
         opts.increase_parallelism(params.persistence_threads);
 
+        // TODO: potentially use a hash skip list here.
         // Use a hash linked list since we're doing prefix seeks.
-        opts.set_allow_concurrent_memtable_write(false);
-        opts.set_memtable_factory(rocksdb::MemtableFactory::HashLinkList {
-            bucket_count: 1_000_000,
-        });
+        // opts.set_allow_concurrent_memtable_write(false);
+        // opts.set_memtable_factory(rocksdb::MemtableFactory::HashLinkList {
+        //     bucket_count: 1_000_000,
+        // });
 
         let full_name = format!("{}.db", name);
         let db = rocksdb::DB::open(&opts, &full_name).unwrap();
@@ -345,21 +346,7 @@ impl PersistentState {
     // prefix transformed this key before or not
     // (without including the byte size of Vec<DataType>).
     fn transform_fn(key: &[u8]) -> Vec<u8> {
-        // We'll have to make sure this isn't the META_KEY even when we're filtering it out
-        // in Self::in_domain_fn, as the SliceTransform is used to make hashed keys for our
-        // HashLinkedList memtable factory.
-        if key == META_KEY {
-            return Vec::from(key);
-        }
-
-        // IndexID is a u32, so bincode uses 4 bytes to serialize it (which we'll skip past):
-        let start = 4;
-        // We encoded the size of the key itself with a u64, which bincode uses 8 bytes to encode:
-        let size_offset = start + 8;
-        let key_size: u64 = bincode::deserialize(&key[start..size_offset]).unwrap();
-        let prefix_len = size_offset + key_size as usize;
-        // Strip away the IndexEpoch and IndexSeq if we haven't already done so:
-        Vec::from(&key[..prefix_len])
+        Vec::from(&key[..4])
     }
 
     // Decides which keys the prefix transform should apply to.
@@ -385,8 +372,7 @@ impl PersistentState {
             epoch: u64,
             seq: IndexSeq,
         ) -> Vec<u8> {
-            let size: u64 = bincode::serialized_size(&k).unwrap();
-            bincode::serialize(&(index_id, size, k, epoch, seq)).unwrap()
+            bincode::serialize(&(index_id, k, epoch, seq)).unwrap()
         }
 
         // We don't deserialize the key anywhere, so we'll serialize the
@@ -401,21 +387,21 @@ impl PersistentState {
         }
     }
 
-    // Used with DB::prefix_iterator to go through all the rows for a given key.
     fn serialize_prefix(index_id: IndexID, key: &KeyType) -> Vec<u8> {
-        fn serialize<K: serde::Serialize>(index_id: IndexID, k: K) -> Vec<u8> {
-            let size: u64 = bincode::serialized_size(&k).unwrap();
-            bincode::serialize(&(index_id, size, k)).unwrap()
-        }
-
+        use bincode::serialize;
         match key {
-            KeyType::Single(k) => serialize(index_id, k),
-            KeyType::Double(k) => serialize(index_id, k),
-            KeyType::Tri(k) => serialize(index_id, k),
-            KeyType::Quad(k) => serialize(index_id, k),
-            KeyType::Quin(k) => serialize(index_id, k),
-            KeyType::Sex(k) => serialize(index_id, k),
-        }
+            KeyType::Single(k) => serialize(&(index_id, k)),
+            KeyType::Double(k) => serialize(&(index_id, k)),
+            KeyType::Tri(k) => serialize(&(index_id, k)),
+            KeyType::Quad(k) => serialize(&(index_id, k)),
+            KeyType::Quin(k) => serialize(&(index_id, k)),
+            KeyType::Sex(k) => serialize(&(index_id, k)),
+        }.unwrap()
+    }
+
+    // Used with DB::prefix_iterator to go through all the rows for a given key.
+    fn serialize_index(index_id: IndexID) -> Vec<u8> {
+        bincode::serialize(&index_id).unwrap()
     }
 
     // Filters out secondary indices to return an iterator for the actual key-value pairs.
@@ -423,12 +409,21 @@ impl PersistentState {
         self.db
             .as_ref()
             .unwrap()
-            .full_iterator(rocksdb::IteratorMode::Start)
-            .take_while(|&(ref key, _)| {
-                // Filter out non-pk indices:
-                let i: IndexID = bincode::deserialize(&key).unwrap();
-                i == 0
-            })
+            .prefix_iterator(&Self::serialize_index(0))
+    }
+
+    fn index_rows(
+        &self,
+        index_id: IndexID,
+        key: &KeyType,
+    ) -> impl Iterator<Item = (Box<[u8]>, Box<[u8]>)> {
+        use rocksdb::{Direction, IteratorMode};
+        let prefix = Self::serialize_prefix(index_id, key);
+        self.db
+            .as_ref()
+            .unwrap()
+            .iterator(IteratorMode::From(&prefix, Direction::Forward))
+            .take_while(move |&(ref key, _)| key.starts_with(&prefix))
     }
 
     // Puts by primary key first, then retrieves the existing value for each index and appends the
@@ -480,8 +475,7 @@ impl PersistentState {
                 // Construct a key with the index values, and serialize it with bincode:
                 let key = KeyType::from(index.columns.iter().map(|i| &r[*i]));
                 // Add 1 to i since we're slicing self.indices by 1..:
-                let prefix = Self::serialize_prefix((i + 1) as u32, &key);
-                for (raw_key, raw_value) in db.prefix_iterator(&prefix) {
+                for (raw_key, raw_value) in self.index_rows((i + 1) as u32, &key) {
                     if &*raw_value == &primary_key[..] {
                         batch.delete(&raw_key).unwrap();
                     }
@@ -492,8 +486,8 @@ impl PersistentState {
         // First retrieve the actual stored row that matches r:
         let pk_index = &self.indices[0];
         let pk = KeyType::from(pk_index.columns.iter().map(|i| &r[*i]));
-        let prefix = Self::serialize_prefix(0, &pk);
         if self.has_unique_index {
+            let prefix = Self::serialize_prefix(0, &pk);
             let raw = db.get(&prefix)
                 .unwrap()
                 .expect("tried removing non-existant primary key row");
@@ -501,7 +495,7 @@ impl PersistentState {
             assert_eq!(r, &value[..], "tried removing non-matching primary key row");
             do_remove(&self.indices[..], &prefix[..]);
         } else {
-            let (key, _value) = db.prefix_iterator(&prefix)
+            let (key, _value) = self.index_rows(0, &pk)
                 .find(|(_, raw_value)| {
                     let value: Vec<DataType> = bincode::deserialize(&*raw_value).unwrap();
                     r == &value[..]
@@ -1003,9 +997,8 @@ mod tests {
         let i = 5;
         let k = state.serialize_key(i, &r, index.seq);
         let prefix = PersistentState::transform_fn(&k);
-        let (key_out, size): (IndexID, u64) = bincode::deserialize(&prefix).unwrap();
-        assert_eq!(i, key_out);
-        assert_eq!(size, bincode::serialized_size(&data).unwrap());
+        let index_id: IndexID = bincode::deserialize(&prefix).unwrap();
+        assert_eq!(i, index_id);
 
         // prefix_extractor requirements:
         // 1) key.starts_with(prefix(key))
