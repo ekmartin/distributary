@@ -1,6 +1,7 @@
 use petgraph::graph::NodeIndex;
-use std::cell;
+use std::borrow::Cow;
 use std::cmp;
+use std::cell;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::mem;
@@ -10,17 +11,17 @@ use std::time;
 
 use std::net::SocketAddr;
 
-use channel::poll::{PollEvent, ProcessResult};
+use Readers;
 use channel::TcpSender;
+use channel::poll::{PollEvent, ProcessResult};
 use debug;
-use group_commit::{GroupCommitQueueSet};
+use group_commit::GroupCommitQueueSet;
 use payload::{ControlReplyPacket, ReplayPieceContext, ReplayTransactionState, TransactionState};
 use prelude::*;
 use slog::Logger;
 use statistics;
 use timekeeper::{RealTime, SimpleTracker, ThreadTime, Timer, TimerSet};
 use transactions;
-use Readers;
 
 type EnqueuedSends = Vec<(ReplicaAddr, Box<Packet>)>;
 
@@ -177,8 +178,7 @@ impl DomainBuilder {
         let control_reply_tx = TcpSender::connect(&self.control_addr).unwrap();
 
         let transaction_state = transactions::DomainState::new(self.index, self.ts);
-        let group_commit_queues =
-            GroupCommitQueueSet::new(&self.persistence_parameters);
+        let group_commit_queues = GroupCommitQueueSet::new(&self.persistence_parameters);
 
         Domain {
             index: self.index,
@@ -1465,7 +1465,7 @@ impl Domain {
         }
     }
 
-    fn seed_row(&self, source: LocalNodeIndex, row: &Row) -> Record {
+    fn seed_row<'a>(&self, source: LocalNodeIndex, row: Cow<'a, [DataType]>) -> Record {
         if let Some(&(start, ref defaults)) = self.ingress_inject.get(&source) {
             let mut v = Vec::with_capacity(start + defaults.len());
             v.extend(row.iter().cloned());
@@ -1476,13 +1476,13 @@ impl Domain {
         let n = self.nodes[&source].borrow();
         if n.is_internal() {
             if let Some(b) = n.get_base() {
-                let mut row = ((**row).clone(), true).into();
+                let mut row = row.into_owned().into();
                 b.fix(&mut row);
                 return row;
             }
         }
 
-        return ((**row).clone(), true).into();
+        return row.into_owned().into();
     }
 
     fn seed_all(&mut self, tag: Tag, keys: HashSet<Vec<DataType>>, sends: &mut EnqueuedSends) {
@@ -1501,8 +1501,15 @@ impl Domain {
                 let (keys, misses): (HashSet<_>, _) = keys.into_iter().partition(|key| match state
                     .lookup(&cols[..], &KeyType::from(key))
                 {
-                    LookupResult::Some(res) => {
-                        rs.extend(res.into_iter().map(|r| self.seed_row(source, r)));
+                    LookupResult::Some(RecordResult::Borrowed(res)) => {
+                        rs.extend(
+                            res.into_iter()
+                                .map(|r| self.seed_row(source, Cow::from(&r[..]))),
+                        );
+                        true
+                    }
+                    LookupResult::Some(RecordResult::Owned(res)) => {
+                        rs.extend(res.into_iter().map(|r| self.seed_row(source, Cow::from(r))));
                         true
                     }
                     LookupResult::Missing => false,
@@ -1633,6 +1640,16 @@ impl Domain {
                 k.insert(Vec::from(key));
                 if let LookupResult::Some(rs) = rs {
                     use std::iter::FromIterator;
+                    let data = match rs {
+                        RecordResult::Owned(rs) => Records::from_iter(
+                            rs.into_iter().map(|r| self.seed_row(source, Cow::from(r))),
+                        ),
+                        RecordResult::Borrowed(rs) => Records::from_iter(
+                            rs.into_iter()
+                                .map(|r| self.seed_row(source, Cow::from(&r[..]))),
+                        ),
+                    };
+
                     let m = Some(box Packet::ReplayPiece {
                         link: Link::new(source, path[0].node),
                         tag: tag,
@@ -1640,7 +1657,7 @@ impl Domain {
                             for_keys: k,
                             ignore: false,
                         },
-                        data: Records::from_iter(rs.into_iter().map(|r| self.seed_row(source, r))),
+                        data,
                         transaction_state: transaction_state,
                     });
                     (m, source, None)
@@ -2476,8 +2493,7 @@ impl Domain {
                     while freed < num_bytes as u64 {
                         if self.nodes[&node].borrow().is_dropped() {
                             break; // Node was dropped. Give up.
-                        }
-                        else if self.nodes[&node].borrow().is_reader() {
+                        } else if self.nodes[&node].borrow().is_reader() {
                             // we can only evict one key a time here because the freed memory
                             // calculation is based on the key that *will* be evicted. We may count
                             // the same individual key twice if we batch evictions here.

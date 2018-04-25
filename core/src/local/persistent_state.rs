@@ -1,6 +1,3 @@
-use std::borrow::Cow;
-use std::rc::Rc;
-
 use bincode;
 use itertools::Itertools;
 use rocksdb::{self, ColumnFamily, SliceTransform, WriteBatch};
@@ -124,7 +121,7 @@ impl State for PersistentState {
             let raw_row = db.get_cf(value_cf, &prefix).unwrap();
             if let Some(raw) = raw_row {
                 let row: Vec<DataType> = bincode::deserialize(&*raw).unwrap();
-                vec![Row(Rc::new(row))]
+                vec![row]
             } else {
                 vec![]
             }
@@ -134,7 +131,7 @@ impl State for PersistentState {
                 .unwrap()
                 .map(|(_key, value)| {
                     let row: Vec<DataType> = bincode::deserialize(&*value).unwrap();
-                    Row(Rc::new(row))
+                    row
                 })
                 .collect()
         } else {
@@ -148,12 +145,12 @@ impl State for PersistentState {
                         .unwrap()
                         .expect("secondary index pointed to missing primary key value");
                     let row: Vec<DataType> = bincode::deserialize(&*raw_row).unwrap();
-                    Row(Rc::new(row))
+                    row
                 })
                 .collect()
         };
 
-        LookupResult::Some(Cow::Owned(data))
+        LookupResult::Some(RecordResult::Owned(data))
     }
 
     fn add_key(&mut self, columns: &[usize], partial: Option<Vec<Tag>>) {
@@ -626,15 +623,14 @@ mod tests {
         insert(&mut state, row);
 
         match state.lookup(columns, &KeyType::Single(&5.into())) {
-            LookupResult::Some(rows) => assert_eq!(rows.len(), 0),
-            LookupResult::Missing => panic!("PersistentStates can't be materialized"),
+            LookupResult::Some(RecordResult::Owned(rows)) => assert_eq!(rows.len(), 0),
+            _ => unreachable!(),
         };
 
         match state.lookup(columns, &KeyType::Single(&10.into())) {
-            LookupResult::Some(rows) => {
-                let data = &*rows[0];
-                assert_eq!(data[0], 10.into());
-                assert_eq!(data[1], "Cat".into());
+            LookupResult::Some(RecordResult::Owned(rows)) => {
+                assert_eq!(rows[0][0], 10.into());
+                assert_eq!(rows[0][1], "Cat".into());
             }
             _ => unreachable!(),
         }
@@ -649,13 +645,13 @@ mod tests {
         insert(&mut state, row.clone());
 
         match state.lookup(columns, &KeyType::Double((1.into(), 2.into()))) {
-            LookupResult::Some(rows) => assert_eq!(rows.len(), 0),
-            LookupResult::Missing => panic!("PersistentStates can't be materialized"),
+            LookupResult::Some(RecordResult::Owned(rows)) => assert_eq!(rows.len(), 0),
+            _ => unreachable!(),
         };
 
         match state.lookup(columns, &KeyType::Double((10.into(), 20.into()))) {
-            LookupResult::Some(rows) => {
-                assert_eq!(&*rows[0], &row);
+            LookupResult::Some(RecordResult::Owned(rows)) => {
+                assert_eq!(rows[0], row);
             }
             _ => unreachable!(),
         }
@@ -671,18 +667,18 @@ mod tests {
         state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
 
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(rows[0], first);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[1, 2], &KeyType::Double(("Cat".into(), 1.into()))) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 2);
-                assert_eq!(&*rows[0], &first);
-                assert_eq!(&*rows[1], &second);
+                assert_eq!(&rows[0], &first);
+                assert_eq!(&rows[1], &second);
             }
             _ => unreachable!(),
         }
@@ -700,33 +696,33 @@ mod tests {
         state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
 
         match state.lookup(pk, &KeyType::Double((1.into(), 2.into()))) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(&rows[0], &first);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(pk, &KeyType::Double((10.into(), 20.into()))) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(pk, &KeyType::Double((1.into(), 20.into()))) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 0);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[2], &KeyType::Single(&"Cat".into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 2);
-                assert_eq!(&*rows[0], &first);
-                assert_eq!(&*rows[1], &second);
+                assert_eq!(&rows[0], &first);
+                assert_eq!(&rows[1], &second);
             }
             _ => unreachable!(),
         }
@@ -742,25 +738,25 @@ mod tests {
         state.add_key(pk, None);
         state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
         match state.lookup(&[0], &KeyType::Single(&1.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(&rows[0], &first);
             }
             _ => unreachable!(),
         }
 
         state.process_records(&mut vec![(first.clone(), false)].into(), None);
         match state.lookup(&[0], &KeyType::Single(&1.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 0);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
@@ -776,18 +772,18 @@ mod tests {
         state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
 
         match state.lookup(&[0], &KeyType::Single(&0.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 2);
-                assert_eq!(&*rows[0], &first);
-                assert_eq!(&*rows[1], &second);
+                assert_eq!(&rows[0], &first);
+                assert_eq!(&rows[1], &second);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[1], &KeyType::Single(&0.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(&rows[0], &first);
             }
             _ => unreachable!(),
         }
@@ -803,17 +799,17 @@ mod tests {
         state.process_records(&mut vec![first.clone(), second.clone()].into(), None);
 
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(&rows[0], &first);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[1], &KeyType::Single(&"Bob".into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
@@ -836,17 +832,17 @@ mod tests {
         params.mode = DurabilityMode::DeleteOnExit;
         let state = PersistentState::new(name, None, &params);
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(&rows[0], &first);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[1], &KeyType::Single(&"Bob".into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
@@ -869,17 +865,17 @@ mod tests {
         params.mode = DurabilityMode::DeleteOnExit;
         let state = PersistentState::new(name, Some(&[0]), &params);
         match state.lookup(&[0], &KeyType::Single(&10.into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &first);
+                assert_eq!(&rows[0], &first);
             }
             _ => unreachable!(),
         }
 
         match state.lookup(&[1], &KeyType::Single(&"Bob".into())) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
@@ -904,27 +900,27 @@ mod tests {
 
         // We only want to remove rows that match exactly, not all rows that match the key:
         match state.lookup(&[0], &KeyType::Single(&first[0])) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &duplicate);
+                assert_eq!(&rows[0], &duplicate);
             }
-            LookupResult::Missing => panic!("PersistentStates can't be materialized"),
+            _ => unreachable!(),
         };
 
         // Also shouldn't have removed other keys:
         match state.lookup(&[0], &KeyType::Single(&second[0])) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
 
         // Make sure we didn't remove secondary keys pointing to different rows:
         match state.lookup(&[1], &KeyType::Single(&second[1])) {
-            LookupResult::Some(rows) => {
+            LookupResult::Some(RecordResult::Owned(rows)) => {
                 assert_eq!(rows.len(), 1);
-                assert_eq!(&*rows[0], &second);
+                assert_eq!(&rows[0], &second);
             }
             _ => unreachable!(),
         }
@@ -985,11 +981,11 @@ mod tests {
             state.add_key(&[1], None);
             // Make sure we actually built the index:
             match state.lookup(&[1], &KeyType::Single(&0.into())) {
-                LookupResult::Some(rs) => {
+                LookupResult::Some(RecordResult::Owned(rs)) => {
                     assert_eq!(rs.len(), 1);
-                    assert_eq!(&*rs[0], &rows[0]);
+                    assert_eq!(&rs[0], &rows[0]);
                 }
-                LookupResult::Missing => unreachable!(),
+                _ => unreachable!(),
             };
 
             // Pretend we crashed right before calling self.persist_meta in self.add_key by
@@ -1008,11 +1004,11 @@ mod tests {
         // And finally, make sure we actually pruned the index
         // (otherwise we'd get two rows from this .lookup):
         match state.lookup(&[1], &KeyType::Single(&0.into())) {
-            LookupResult::Some(rs) => {
+            LookupResult::Some(RecordResult::Owned(rs)) => {
                 assert_eq!(rs.len(), 1);
-                assert_eq!(&*rs[0], &rows[0]);
+                assert_eq!(&rs[0], &rows[0]);
             }
-            LookupResult::Missing => unreachable!(),
+            _ => unreachable!(),
         };
     }
 
@@ -1075,7 +1071,7 @@ mod tests {
         state.add_key(&[1], None);
 
         match state.lookup(&[1], &KeyType::Single(&row[1])) {
-            LookupResult::Some(rows) => assert_eq!(&*rows[0], &row),
+            LookupResult::Some(RecordResult::Owned(rows)) => assert_eq!(&rows[0], &row),
             _ => unreachable!(),
         };
     }
@@ -1096,7 +1092,7 @@ mod tests {
 
         // Make sure the first record has been deleted:
         match state.lookup(&[0], &KeyType::Single(&records[0][0])) {
-            LookupResult::Some(rows) => assert_eq!(rows.len(), 0),
+            LookupResult::Some(RecordResult::Owned(rows)) => assert_eq!(rows.len(), 0),
             _ => unreachable!(),
         };
 
@@ -1104,7 +1100,7 @@ mod tests {
         for i in 1..3 {
             let record = &records[i];
             match state.lookup(&[0], &KeyType::Single(&record[0])) {
-                LookupResult::Some(rows) => assert_eq!(&*rows[0], &**record),
+                LookupResult::Some(RecordResult::Owned(rows)) => assert_eq!(rows[0], **record),
                 _ => unreachable!(),
             };
         }
