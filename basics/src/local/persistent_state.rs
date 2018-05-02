@@ -352,9 +352,17 @@ impl PersistentState {
         opts.set_compression_type(rocksdb::DBCompressionType::Lz4);
         opts.create_if_missing(true);
         opts.create_missing_column_families(true);
-        let mut block_opts = rocksdb::BlockBasedOptions::default();
-        block_opts.set_bloom_filter(10, true);
-        opts.set_block_based_table_factory(&block_opts);
+
+        let key_len = 0; // variable key length
+        let bloom_bits_per_key = 10;
+        let hash_table_ratio = 0.75;
+        let index_sparseness = 16;
+        opts.set_plain_table_factory(
+            key_len,
+            bloom_bits_per_key,
+            hash_table_ratio,
+            index_sparseness,
+        );
 
         if let Some(ref path) = params.log_dir {
             // Append the db name to the WAL path to ensure
