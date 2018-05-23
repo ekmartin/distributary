@@ -124,7 +124,6 @@ fn pre_recovery(
     let mut g = make(s, authority);
     let mut articles = g.graph.get_mutator("Article").unwrap();
     let mut votes = g.graph.get_mutator("Vote").unwrap();
-    let getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
 
     // prepopulate
     if verbose {
@@ -144,9 +143,6 @@ fn pre_recovery(
         .map(|i| vec![DataType::BigInt((i % narticles) as i64), i.into()])
         .collect();
     votes.batch_put(v_rows).unwrap();
-
-    thread::sleep(Duration::from_secs(1));
-    wait_for_writes(getter, narticles, nvotes);
 }
 
 fn main() {
@@ -205,6 +201,7 @@ fn main() {
 
     let start = Instant::now();
     let mut g = make(s, authority);
+    thread::sleep(Duration::from_millis(100));
     let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
     getter.lookup(&[0.into()], true).unwrap();
     println!(
