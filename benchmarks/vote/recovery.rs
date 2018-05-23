@@ -35,7 +35,7 @@ const BATCH_SIZE: usize = 10000;
 fn get_name() -> String {
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     format!(
-        "vote-recovery-{}-{}",
+        "vote_recovery_{}_{}",
         current_time.as_secs(),
         current_time.subsec_nanos()
     )
