@@ -5,7 +5,6 @@ extern crate futures;
 extern crate futures_state_stream;
 extern crate memcached;
 extern crate mysql;
-extern crate rand;
 extern crate rayon;
 extern crate tiberius;
 extern crate tokio_core;
@@ -19,14 +18,6 @@ use std::time::{self, Duration, Instant};
 use clients::localsoup::graph::RECIPE;
 use distributary::{ControllerBuilder, ControllerHandle, NodeIndex, PersistenceParameters,
                    ZookeeperAuthority};
-
-fn randomness(range: usize, n: usize) -> Vec<i64> {
-    use rand::Rng;
-    let mut u = rand::thread_rng();
-    (0..n)
-        .map(|_| u.gen_range(0, range as i64) as i64)
-        .collect()
-}
 
 macro_rules! dur_to_millis {
     ($d:expr) => {{
@@ -119,7 +110,6 @@ fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvo
 
 fn pre_recovery(
     s: Setup,
-    random: Vec<i64>,
     narticles: usize,
     nvotes: usize,
     verbose: bool,
@@ -144,7 +134,7 @@ fn pre_recovery(
         eprintln!("Populating with {} votes", nvotes);
     }
 
-    let v_rows: Vec<_> = (0..nvotes).map(|i| vec![random[i].into(), i.into()]).collect();
+    let v_rows: Vec<_> = (0..nvotes).map(|i| vec![(i % narticles).into(), i.into()]).collect();
     votes.batch_put(v_rows).unwrap();
 
     thread::sleep(Duration::from_secs(1));
@@ -199,8 +189,7 @@ fn main() {
     let zk_address = args.value_of("zookeeper-address").unwrap();
     let authority = Arc::new(ZookeeperAuthority::new(zk_address));
     // Prepopulate with narticles and nvotes:
-    let random = randomness(narticles, nvotes);
-    pre_recovery(s.clone(), random, narticles, nvotes, verbose, authority.clone());
+    pre_recovery(s.clone(), narticles, nvotes, verbose, authority.clone());
 
     if verbose {
         eprintln!("Done populating state, now recovering...");
