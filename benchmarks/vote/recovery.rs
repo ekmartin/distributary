@@ -15,19 +15,10 @@ mod clients;
 use std::u64;
 use std::thread;
 use std::sync::Arc;
-use std::time::{self, Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{self, Duration, Instant};
 use clients::localsoup::graph::RECIPE;
 use distributary::{ControllerBuilder, ControllerHandle, NodeIndex, PersistenceParameters,
                    ZookeeperAuthority};
-
-fn get_name() -> String {
-    let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    format!(
-        "vote-recovery-{}-{}",
-        current_time.as_secs(),
-        current_time.subsec_nanos()
-    )
-}
 
 fn randomness(range: usize, n: usize) -> Vec<i64> {
     use rand::Rng;
@@ -67,7 +58,7 @@ struct Graph {
     pub graph: ControllerHandle<ZookeeperAuthority>,
 }
 
-fn make(s: Setup, authority: ZookeeperAuthority) -> Graph {
+fn make(s: Setup, authority: Arc<ZookeeperAuthority>) -> Graph {
     let mut g = ControllerBuilder::default();
     g.set_sharding(s.sharding);
     g.set_persistence(s.persistence_params.clone());
@@ -77,7 +68,7 @@ fn make(s: Setup, authority: ZookeeperAuthority) -> Graph {
         g.log_with(distributary::logger_pls());
     }
 
-    let mut graph = g.build(Arc::new(authority));
+    let mut graph = g.build(authority);
     graph.install_recipe(RECIPE.to_owned()).unwrap();
     let inputs = graph.inputs();
     let outputs = graph.outputs();
@@ -138,11 +129,8 @@ fn pre_recovery(
     narticles: usize,
     nvotes: usize,
     verbose: bool,
+    authority: Arc<ZookeeperAuthority>,
 ) {
-    let authority = ZookeeperAuthority::new(&format!(
-        "127.0.0.1:2181/{}",
-        s.persistence_params.log_prefix
-    ));
     let mut g = make(s, authority);
     let mut articles = g.graph.get_mutator("Article").unwrap();
     let mut votes = g.graph.get_mutator("Vote").unwrap();
@@ -200,11 +188,11 @@ fn main() {
                 .help("Skips pre-population and instead uses already persisted data."),
         )
         .arg(
-            Arg::with_name("shards")
-                .long("shards")
+            Arg::with_name("zookeeper-address")
+                .long("zookeeper-address")
                 .takes_value(true)
-                .default_value("2")
-                .help("Shard the graph this many ways (0 = disable sharding)."),
+                .default_value("127.0.0.1:2181/replay")
+                .help("ZookeeperAuthority address"),
         )
         .arg(Arg::with_name("verbose").long("verbose").short("v"))
         .get_matches();
@@ -212,33 +200,29 @@ fn main() {
     let narticles = value_t_or_exit!(args, "narticles", usize);
     let nvotes = value_t_or_exit!(args, "nvotes", usize);
     let verbose = args.is_present("verbose");
-    let name = get_name();
     let persistence_params = distributary::PersistenceParameters::new(
         distributary::DurabilityMode::Permanent,
         512,
         Duration::from_millis(10),
-        Some(name.clone()),
+        Some(String::from("vote-recovery")),
         4,
     );
 
     let mut s = Setup::new(persistence_params);
     s.logging = verbose;
-    s.sharding = match value_t_or_exit!(args, "shards", usize) {
-        0 => None,
-        x => Some(x),
-    };
-
+    s.sharding = None;
+    let zk_address = args.value_of("zookeeper-address").unwrap();
+    let authority = Arc::new(ZookeeperAuthority::new(zk_address));
     if !args.is_present("use-existing-data") {
         // Prepopulate with narticles and nvotes:
         let random = randomness(narticles, nvotes);
-        pre_recovery(s.clone(), random, narticles, nvotes, verbose);
+        pre_recovery(s.clone(), random, narticles, nvotes, verbose, authority.clone());
 
         if verbose {
             eprintln!("Done populating state, now recovering...");
         }
     }
 
-    let authority = ZookeeperAuthority::new(&format!("127.0.0.1:2181/{}", name));
     let mut g = make(s, authority);
     let getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
 
