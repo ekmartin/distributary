@@ -16,6 +16,7 @@ use distributary::{
     ControllerBuilder, ControllerHandle, DataType, NodeIndex, PersistenceParameters,
     ZookeeperAuthority,
 };
+use std::fs;
 use std::sync::Arc;
 use std::thread;
 use std::time::{self, Duration, Instant};
@@ -179,11 +180,12 @@ fn main() {
     let narticles = value_t_or_exit!(args, "narticles", usize);
     let nvotes = value_t_or_exit!(args, "nvotes", usize);
     let verbose = args.is_present("verbose");
+    let name = "vote_recovery";
     let persistence_params = distributary::PersistenceParameters::new(
         distributary::DurabilityMode::Permanent,
         512,
         Duration::from_millis(10),
-        Some(String::from("vote_recovery")),
+        Some(String::from(name)),
         4,
     );
 
@@ -220,4 +222,7 @@ fn main() {
     wait_for_writes(getter, narticles, nvotes);
     let total_elapsed = dur_to_millis!(start.elapsed());
     println!("Total Recovery Time (ms): {}", total_elapsed);
+
+    fs::remove_dir_all(format!("./{}-Article-0.db", name)).unwrap();
+    fs::remove_dir_all(format!("./{}-Vote-0.db", name)).unwrap();
 }
