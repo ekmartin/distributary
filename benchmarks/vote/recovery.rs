@@ -105,7 +105,7 @@ fn make(s: Setup, authority: ZookeeperAuthority) -> Graph {
 // Soup for results.
 fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvotes: usize) {
     loop {
-        let keys = (0..narticles as i64).map(|i| i.into()).collect();
+        let keys = (0..narticles as i64).map(|i| DataType::BigInt(i)).collect();
         let rows = getter.multi_lookup(keys, true);
         let sum: i64 = rows.into_iter()
             .map(|result| {
