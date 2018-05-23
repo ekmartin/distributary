@@ -203,7 +203,7 @@ fn main() {
     let mut g = make(s, authority);
     thread::sleep(Duration::from_millis(200));
     let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
-    let rows = getter.lookup(&[0.into()], true).unwrap();
+    let rows = getter.lookup(&[DataType::BigInt(0)], true).unwrap();
     println!(
         "Initial Read Time (ms): {}",
         dur_to_millis!(start.elapsed())
