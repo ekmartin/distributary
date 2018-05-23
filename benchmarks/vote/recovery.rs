@@ -3,6 +3,7 @@ extern crate clap;
 extern crate distributary;
 extern crate futures;
 extern crate futures_state_stream;
+extern crate itertools;
 extern crate memcached;
 extern crate mysql;
 extern crate rayon;
@@ -10,6 +11,8 @@ extern crate tiberius;
 extern crate tokio_core;
 
 mod clients;
+
+use itertools::Itertools;
 
 use clients::localsoup::graph::RECIPE;
 use distributary::{
@@ -21,6 +24,11 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{self, Duration, Instant};
 use std::u64;
+
+// If we .batch_put a huge amount of rows we'll end up with a deadlock when the base
+// domains fill up their TCP buffers trying to send ACKs (which the batch putter
+// isn't reading yet, since it's still busy sending).
+const BATCH_SIZE: usize = 10000;
 
 macro_rules! dur_to_millis {
     ($d:expr) => {{
@@ -131,19 +139,27 @@ fn pre_recovery(
         eprintln!("Populating with {} articles", narticles);
     }
 
-    let a_rows: Vec<_> = (0..(narticles as i64))
+    (0..(narticles as i64))
         .map(|i| vec![DataType::BigInt(i), format!("Article #{}", i).into()])
-        .collect();
-    articles.batch_put(a_rows).unwrap();
+        .chunks(BATCH_SIZE)
+        .into_iter()
+        .for_each(|chunk| {
+            let rs: Vec<Vec<DataType>> = chunk.collect();
+            articles.multi_put(rs).unwrap();
+        });
 
     if verbose {
         eprintln!("Populating with {} votes", nvotes);
     }
 
-    let v_rows: Vec<_> = (0..nvotes)
+    (0..nvotes)
         .map(|i| vec![DataType::BigInt((i % narticles) as i64), i.into()])
-        .collect();
-    votes.batch_put(v_rows).unwrap();
+        .chunks(BATCH_SIZE)
+        .into_iter()
+        .for_each(|chunk| {
+            let rs: Vec<Vec<DataType>> = chunk.collect();
+            votes.multi_put(rs).unwrap();
+        });
 }
 
 fn main() {
