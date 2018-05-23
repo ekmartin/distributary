@@ -181,13 +181,6 @@ fn main() {
                 .help("Number of votes to prepopulate the database with"),
         )
         .arg(
-            Arg::with_name("use-existing-data")
-                .long("use-existing-data")
-                .requires("retain-logs-on-exit")
-                .takes_value(false)
-                .help("Skips pre-population and instead uses already persisted data."),
-        )
-        .arg(
             Arg::with_name("zookeeper-address")
                 .long("zookeeper-address")
                 .takes_value(true)
@@ -213,14 +206,12 @@ fn main() {
     s.sharding = None;
     let zk_address = args.value_of("zookeeper-address").unwrap();
     let authority = Arc::new(ZookeeperAuthority::new(zk_address));
-    if !args.is_present("use-existing-data") {
-        // Prepopulate with narticles and nvotes:
-        let random = randomness(narticles, nvotes);
-        pre_recovery(s.clone(), random, narticles, nvotes, verbose, authority.clone());
+    // Prepopulate with narticles and nvotes:
+    let random = randomness(narticles, nvotes);
+    pre_recovery(s.clone(), random, narticles, nvotes, verbose, authority.clone());
 
-        if verbose {
-            eprintln!("Done populating state, now recovering...");
-        }
+    if verbose {
+        eprintln!("Done populating state, now recovering...");
     }
 
     let mut g = make(s, authority);
