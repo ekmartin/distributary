@@ -101,6 +101,10 @@ name = "vote-migration"
 path = "vote-migration/main.rs"
 
 [[bin]]
+name = "vote-recovery"
+path = "vote/recovery.rs"
+
+[[bin]]
 name = "replay"
 path = "replay/main.rs"
 
