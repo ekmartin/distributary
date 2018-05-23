@@ -219,13 +219,6 @@ fn main() {
                 .help("Snapshot only recovery, no replaying of logs."),
         )
         .arg(
-            Arg::with_name("zookeeper-address")
-                .long("zookeeper-address")
-                .takes_value(true)
-                .default_value("127.0.0.1:2181/recovery")
-                .help("ZookeeperAuthority address"),
-        )
-        .arg(
             Arg::with_name("shards")
                 .long("shards")
                 .takes_value(true)
@@ -262,7 +255,7 @@ fn main() {
     let mut s = Setup::new(persistence_params);
     s.logging = verbose;
     s.sharding = None;
-    let zk_address = args.value_of("zookeeper-address").unwrap();
+    let zk_address = &format!("127.0.0.1:2181/{}", name);
 
     // Prepopulate with narticles and nvotes:
     pre_recovery(s.clone(), zk_address, narticles, nvotes, snapshot, verbose);
