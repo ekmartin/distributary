@@ -91,15 +91,13 @@ fn make(s: Setup, authority: Arc<ZookeeperAuthority>) -> Graph {
 // TODO(ekmartin): Would be nice if there's a way we can do this without having to poll
 // Soup for results.
 fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvotes: usize) {
-    let mut start = Some(Instant::now());
+    let start = Instant::now();
+    getter.lookup(&[0.into()], true).unwrap();
+    println!("Initial Read Time (ms): {}", dur_to_millis!(start.elapsed()));
+    let total = Instant::now();
     loop {
         let keys: Vec<Vec<_>> = (0..narticles as i64).map(|i| vec![i.into()]).collect();
         let rows = getter.multi_lookup(keys, true);
-        if start.is_some() {
-            println!("Initial Read Time (ms): {}", dur_to_millis!(start.unwrap().elapsed()));
-            start = None;
-        }
-
         let sum: i64 = rows.unwrap().into_iter()
             .map(|row| {
                 if row.is_empty() {
@@ -116,6 +114,8 @@ fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvo
             .sum();
 
         if sum == nvotes as i64 {
+            let total_elapsed = dur_to_millis!(total.elapsed());
+            println!("Total Recovery Time (ms): {}", total_elapsed);
             return;
         }
 
@@ -184,7 +184,7 @@ fn main() {
             Arg::with_name("zookeeper-address")
                 .long("zookeeper-address")
                 .takes_value(true)
-                .default_value("127.0.0.1:2181/replay")
+                .default_value("127.0.0.1:2181/recovery")
                 .help("ZookeeperAuthority address"),
         )
         .arg(Arg::with_name("verbose").long("verbose").short("v"))
@@ -197,7 +197,7 @@ fn main() {
         distributary::DurabilityMode::Permanent,
         512,
         Duration::from_millis(10),
-        Some(String::from("vote-recovery")),
+        Some(String::from("vote_recovery")),
         4,
     );
 
@@ -217,10 +217,5 @@ fn main() {
     let mut g = make(s, authority);
     let getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
 
-    let start = Instant::now();
-    let initial = dur_to_millis!(start.elapsed());
-    println!("Blocking Recovery Time (ms): {}", initial);
     wait_for_writes(getter, narticles, nvotes);
-    let total = dur_to_millis!(start.elapsed());
-    println!("Total Recovery Time (ms): {}", total);
 }
