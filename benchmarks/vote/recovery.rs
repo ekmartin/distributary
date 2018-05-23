@@ -91,7 +91,6 @@ fn make(s: Setup, authority: Arc<ZookeeperAuthority>) -> Graph {
 // TODO(ekmartin): Would be nice if there's a way we can do this without having to poll
 // Soup for results.
 fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvotes: usize) {
-    let total = Instant::now();
     loop {
         let keys: Vec<Vec<_>> = (0..narticles as i64).map(|i| vec![i.into()]).collect();
         let rows = getter.multi_lookup(keys, true);
@@ -111,8 +110,6 @@ fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvo
             .sum();
 
         if sum == nvotes as i64 {
-            let total_elapsed = dur_to_millis!(total.elapsed());
-            println!("Total Recovery Time (ms): {}", total_elapsed);
             return;
         }
 
@@ -138,19 +135,17 @@ fn pre_recovery(
         eprintln!("Populating with {} articles", narticles);
     }
 
-    for i in 0..(narticles as i64) {
-        articles
-            .put(vec![i.into(), format!("Article #{}", i).into()])
-            .unwrap();
-    }
+    let a_rows: Vec<_> = (0..(narticles as i64))
+        .map(|i| vec![i.into(), format!("Article #{}", i).into()])
+        .collect();
+    articles.batch_put(a_rows).unwrap();
 
     if verbose {
         eprintln!("Populating with {} votes", nvotes);
     }
 
-    for i in 0..nvotes {
-        votes.put(vec![random[i].into(), i.into()]).unwrap();
-    }
+    let v_rows: Vec<_> = (0..nvotes).map(|i| vec![random[i].into(), i.into()]).collect();
+    votes.batch_put(v_rows).unwrap();
 
     thread::sleep(Duration::from_secs(1));
     wait_for_writes(getter, narticles, nvotes);
@@ -217,5 +212,8 @@ fn main() {
     getter.lookup(&[0.into()], true).unwrap();
     println!("Initial Read Time (ms): {}", dur_to_millis!(start.elapsed()));
 
+    let total = Instant::now();
     wait_for_writes(getter, narticles, nvotes);
+    let total_elapsed = dur_to_millis!(total.elapsed());
+    println!("Total Recovery Time (ms): {}", total_elapsed);
 }
