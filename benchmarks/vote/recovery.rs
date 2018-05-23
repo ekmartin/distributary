@@ -11,18 +11,20 @@ extern crate tokio_core;
 
 mod clients;
 
-use std::u64;
-use std::thread;
-use std::sync::Arc;
-use std::time::{self, Duration, Instant};
 use clients::localsoup::graph::RECIPE;
-use distributary::{ControllerBuilder, ControllerHandle, NodeIndex, PersistenceParameters,
-                   ZookeeperAuthority};
+use distributary::{
+    ControllerBuilder, ControllerHandle, DataType, NodeIndex, PersistenceParameters,
+    ZookeeperAuthority,
+};
+use std::sync::Arc;
+use std::thread;
+use std::time::{self, Duration, Instant};
+use std::u64;
 
 macro_rules! dur_to_millis {
     ($d:expr) => {{
         $d.as_secs() * 1_000 + $d.subsec_nanos() as u64 / 1_000_000
-    }}
+    }};
 }
 
 #[derive(Clone)]
@@ -83,18 +85,22 @@ fn make(s: Setup, authority: Arc<ZookeeperAuthority>) -> Graph {
 // Soup for results.
 fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvotes: usize) {
     loop {
-        let keys: Vec<Vec<_>> = (0..narticles as i64).map(|i| vec![i.into()]).collect();
+        let keys: Vec<Vec<_>> = (0..narticles as i64)
+            .map(|i| vec![DataType::BigInt(i)])
+            .collect();
         let rows = getter.multi_lookup(keys, true);
-        let sum: i64 = rows.unwrap().into_iter()
+        let sum: i64 = rows
+            .unwrap()
+            .into_iter()
             .map(|row| {
                 if row.is_empty() {
                     return 0;
                 }
 
                 match row[0][2] {
-                    distributary::DataType::None => 0,
-                    distributary::DataType::BigInt(i) => i,
-                    distributary::DataType::Int(i) => i as i64,
+                    DataType::None => 0,
+                    DataType::BigInt(i) => i,
+                    DataType::Int(i) => i as i64,
                     _ => unreachable!(),
                 }
             })
@@ -126,7 +132,7 @@ fn pre_recovery(
     }
 
     let a_rows: Vec<_> = (0..(narticles as i64))
-        .map(|i| vec![i.into(), format!("Article #{}", i).into()])
+        .map(|i| vec![DataType::BigInt(i), format!("Article #{}", i).into()])
         .collect();
     articles.batch_put(a_rows).unwrap();
 
@@ -134,7 +140,9 @@ fn pre_recovery(
         eprintln!("Populating with {} votes", nvotes);
     }
 
-    let v_rows: Vec<_> = (0..nvotes).map(|i| vec![(i % narticles).into(), i.into()]).collect();
+    let v_rows: Vec<_> = (0..nvotes)
+        .map(|i| vec![DataType::BigInt((i % narticles) as i64), i.into()])
+        .collect();
     votes.batch_put(v_rows).unwrap();
 
     thread::sleep(Duration::from_secs(1));
@@ -199,7 +207,10 @@ fn main() {
     let mut g = make(s, authority);
     let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
     getter.lookup(&[0.into()], true).unwrap();
-    println!("Initial Read Time (ms): {}", dur_to_millis!(start.elapsed()));
+    println!(
+        "Initial Read Time (ms): {}",
+        dur_to_millis!(start.elapsed())
+    );
 
     let total = Instant::now();
     wait_for_writes(getter, narticles, nvotes);
