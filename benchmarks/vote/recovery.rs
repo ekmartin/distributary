@@ -91,9 +91,6 @@ fn make(s: Setup, authority: Arc<ZookeeperAuthority>) -> Graph {
 // TODO(ekmartin): Would be nice if there's a way we can do this without having to poll
 // Soup for results.
 fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvotes: usize) {
-    let start = Instant::now();
-    getter.lookup(&[0.into()], true).unwrap();
-    println!("Initial Read Time (ms): {}", dur_to_millis!(start.elapsed()));
     let total = Instant::now();
     loop {
         let keys: Vec<Vec<_>> = (0..narticles as i64).map(|i| vec![i.into()]).collect();
@@ -214,8 +211,11 @@ fn main() {
         eprintln!("Done populating state, now recovering...");
     }
 
+    let start = Instant::now();
     let mut g = make(s, authority);
-    let getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
+    let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
+    getter.lookup(&[0.into()], true).unwrap();
+    println!("Initial Read Time (ms): {}", dur_to_millis!(start.elapsed()));
 
     wait_for_writes(getter, narticles, nvotes);
 }
