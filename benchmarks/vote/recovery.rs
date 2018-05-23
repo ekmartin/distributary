@@ -217,6 +217,7 @@ fn main() {
         eprintln!("Done populating state, now recovering...");
     }
 
+    println!("# articles: {} - votes: {}", narticles, nvotes);
     let start = Instant::now();
     let mut g = make(s, authority);
     let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
