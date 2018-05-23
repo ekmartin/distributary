@@ -201,7 +201,6 @@ fn main() {
 
     let start = Instant::now();
     let mut g = make(s, authority);
-    thread::sleep(Duration::from_millis(200));
     let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
     let rows = getter.lookup(&[DataType::BigInt(0)], true).unwrap();
     println!(
@@ -218,8 +217,7 @@ fn main() {
 
     assert_eq!(count, (nvotes as i64) / (narticles as i64));
 
-    let total = Instant::now();
     wait_for_writes(getter, narticles, nvotes);
-    let total_elapsed = dur_to_millis!(total.elapsed());
+    let total_elapsed = dur_to_millis!(start.elapsed());
     println!("Total Recovery Time (ms): {}", total_elapsed);
 }
