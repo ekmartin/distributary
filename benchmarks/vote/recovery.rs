@@ -201,13 +201,22 @@ fn main() {
 
     let start = Instant::now();
     let mut g = make(s, authority);
-    thread::sleep(Duration::from_millis(100));
+    thread::sleep(Duration::from_millis(200));
     let mut getter = g.graph.get_getter("ArticleWithVoteCount").unwrap();
-    getter.lookup(&[0.into()], true).unwrap();
+    let rows = getter.lookup(&[0.into()], true).unwrap();
     println!(
         "Initial Read Time (ms): {}",
         dur_to_millis!(start.elapsed())
     );
+
+    let count = match rows[0][2] {
+        DataType::None => 0,
+        DataType::BigInt(i) => i,
+        DataType::Int(i) => i as i64,
+        _ => unreachable!(),
+    };
+
+    assert_eq!(count, (nvotes as i64) / (narticles as i64));
 
     let total = Instant::now();
     wait_for_writes(getter, narticles, nvotes);
