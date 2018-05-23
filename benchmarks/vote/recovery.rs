@@ -277,17 +277,20 @@ fn main() {
     let mut getter = g.graph.get_getter(g.end).unwrap();
     g.graph.recover();
 
-    let rows = getter.lookup(&DataType::BigInt(0), true).unwrap();
-    let initial = dur_to_millis!(start.elapsed());
-    println!("Initial Recovery Time (ms): {}", initial);
-    let count = match rows[0][2] {
-        DataType::None => 0,
-        DataType::BigInt(i) => i,
-        DataType::Int(i) => i as i64,
-        _ => unreachable!(),
-    };
+    if snapshot {
+        let rows = getter.lookup(&DataType::BigInt(0), true).unwrap();
+        let initial = dur_to_millis!(start.elapsed());
+        println!("Initial Recovery Time (ms): {}", initial);
+        let count = match rows[0][2] {
+            DataType::None => 0,
+            DataType::BigInt(i) => i,
+            DataType::Int(i) => i as i64,
+            _ => unreachable!(),
+        };
 
-    assert_eq!(count, (nvotes as i64) / (narticles as i64));
+        assert_eq!(count, (nvotes as i64) / (narticles as i64));
+    }
+
     wait_for_writes(getter, narticles, nvotes);
     let total = dur_to_millis!(start.elapsed());
     println!("Total Recovery Time (ms): {}", total);
