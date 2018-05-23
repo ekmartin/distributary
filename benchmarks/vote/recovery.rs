@@ -6,6 +6,7 @@ extern crate futures_state_stream;
 extern crate glob;
 extern crate hdrsample;
 extern crate hwloc;
+extern crate itertools;
 extern crate libc;
 extern crate memcached;
 extern crate mysql;
@@ -16,13 +17,20 @@ extern crate tokio_core;
 
 mod clients;
 
+use itertools::Itertools;
+
 use std::u64;
 use std::thread;
 use std::time::{self, Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::fs;
 use clients::localsoup::graph::RECIPE;
-use distributary::{ControllerBuilder, ControllerHandle, NodeIndex, PersistenceParameters,
+use distributary::{ControllerBuilder, ControllerHandle, DataType, NodeIndex, PersistenceParameters,
                    ZookeeperAuthority};
+
+// If we .batch_put a huge amount of rows we'll end up with a deadlock when the base
+// domains fill up their TCP buffers trying to send ACKs (which the batch putter
+// isn't reading yet, since it's still busy sending).
+const BATCH_SIZE: usize = 10000;
 
 fn get_name() -> String {
     let current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -31,14 +39,6 @@ fn get_name() -> String {
         current_time.as_secs(),
         current_time.subsec_nanos()
     )
-}
-
-fn randomness(range: usize, n: usize) -> Vec<i64> {
-    use rand::Rng;
-    let mut u = rand::thread_rng();
-    (0..n)
-        .map(|_| u.gen_range(0, range as i64) as i64)
-        .collect()
 }
 
 macro_rules! dur_to_millis {
@@ -133,16 +133,13 @@ fn wait_for_writes(mut getter: distributary::RemoteGetter, narticles: usize, nvo
 
 fn pre_recovery(
     s: Setup,
-    random: Vec<i64>,
+    zk_address: &str,
     narticles: usize,
     nvotes: usize,
     snapshot: bool,
     verbose: bool,
 ) {
-    let authority = ZookeeperAuthority::new(&format!(
-        "127.0.0.1:2181/{}",
-        s.persistence_params.log_prefix
-    ));
+    let authority = ZookeeperAuthority::new(zk_address);
     let mut g = make(s, authority);
     let mut articles = g.graph.get_mutator(g.article).unwrap();
     let mut votes = g.graph.get_mutator(g.vote).unwrap();
@@ -153,19 +150,27 @@ fn pre_recovery(
         eprintln!("Populating with {} articles", narticles);
     }
 
-    for i in 0..(narticles as i64) {
-        articles
-            .put(vec![i.into(), format!("Article #{}", i).into()])
-            .unwrap();
-    }
+    (0..(narticles as i64))
+        .map(|i| vec![DataType::BigInt(i), format!("Article #{}", i).into()])
+        .chunks(BATCH_SIZE)
+        .into_iter()
+        .for_each(|chunk| {
+            let rs: Vec<Vec<DataType>> = chunk.collect();
+            articles.multi_put(rs).unwrap();
+        });
 
     if verbose {
         eprintln!("Populating with {} votes", nvotes);
     }
 
-    for i in 0..nvotes {
-        votes.put(vec![random[i].into(), i.into()]).unwrap();
-    }
+    (0..nvotes)
+        .map(|i| vec![DataType::BigInt((i % narticles) as i64), i.into()])
+        .chunks(BATCH_SIZE)
+        .into_iter()
+        .for_each(|chunk| {
+            let rs: Vec<Vec<DataType>> = chunk.collect();
+            votes.multi_put(rs).unwrap();
+        });
 
     thread::sleep(Duration::from_secs(1));
     wait_for_writes(getter, narticles, nvotes);
@@ -214,6 +219,13 @@ fn main() {
                 .help("Snapshot only recovery, no replaying of logs."),
         )
         .arg(
+            Arg::with_name("zookeeper-address")
+                .long("zookeeper-address")
+                .takes_value(true)
+                .default_value("127.0.0.1:2181/recovery")
+                .help("ZookeeperAuthority address"),
+        )
+        .arg(
             Arg::with_name("shards")
                 .long("shards")
                 .takes_value(true)
@@ -249,27 +261,33 @@ fn main() {
 
     let mut s = Setup::new(persistence_params);
     s.logging = verbose;
-    s.sharding = match value_t_or_exit!(args, "shards", usize) {
-        0 => None,
-        x => Some(x),
-    };
+    s.sharding = None;
+    let zk_address = args.value_of("zookeeper-address").unwrap();
 
     // Prepopulate with narticles and nvotes:
-    let random = randomness(narticles, nvotes);
-    pre_recovery(s.clone(), random, narticles, nvotes, snapshot, verbose);
+    pre_recovery(s.clone(), zk_address, narticles, nvotes, snapshot, verbose);
 
     if verbose {
         eprintln!("Done populating state, now recovering...");
     }
 
-    let authority = ZookeeperAuthority::new(&format!("127.0.0.1:2181/{}", name));
-    let mut g = make(s, authority);
-    let getter = g.graph.get_getter(g.end).unwrap();
-
     let start = Instant::now();
+    let authority = ZookeeperAuthority::new(zk_address);
+    let mut g = make(s, authority);
+    let mut getter = g.graph.get_getter(g.end).unwrap();
     g.graph.recover();
+
+    let rows = getter.lookup(&DataType::BigInt(0), true).unwrap();
     let initial = dur_to_millis!(start.elapsed());
     println!("Initial Recovery Time (ms): {}", initial);
+    let count = match rows[0][2] {
+        DataType::None => 0,
+        DataType::BigInt(i) => i,
+        DataType::Int(i) => i as i64,
+        _ => unreachable!(),
+    };
+
+    assert_eq!(count, (nvotes as i64) / (narticles as i64));
     wait_for_writes(getter, narticles, nvotes);
     let total = dur_to_millis!(start.elapsed());
     println!("Total Recovery Time (ms): {}", total);
